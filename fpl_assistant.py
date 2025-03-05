@@ -24,9 +24,10 @@ async def get_fixture_difficulties(fpl):
     for fixture in fixtures:
         if fixture.finished or fixture.event is None:
             continue
-        for team_side in ['team_h', 'team_a']:
-            team_id = fixture[team_side]
-            difficulty = fixture[f"{team_side}_difficulty"]
+        for team_id, difficulty in [
+            (fixture.team_h, fixture.team_h_difficulty),
+            (fixture.team_a, fixture.team_a_difficulty)
+        ]:
             if team_id not in team_fixtures:
                 team_fixtures[team_id] = []
             team_fixtures[team_id].append(difficulty)
