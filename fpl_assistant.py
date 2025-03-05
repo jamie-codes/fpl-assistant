@@ -34,7 +34,7 @@ EMAIL_CONFIG = {
 
 # Set up logging with UTF-8 encoding
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Enable DEBUG level logging
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
@@ -81,10 +81,13 @@ async def get_fixture_difficulties(fpl):
 
 
 async def calculate_team_fdr(team_fixtures, team_id):
-    """Calculate the total fixture difficulty rating (FDR) for a team."""
+    """Calculate the total fixture difficulty rating (FDR) for a team, ensuring valid FDR values (1-5)."""
     fixtures = team_fixtures.get(team_id, [])
-    return sum(fixtures[:FIXTURE_LOOKAHEAD])
-
+    
+    # Ensure FDR values are within the valid range (1-5)
+    valid_fixtures = [min(max(fdr, 1), 5) for fdr in fixtures[:FIXTURE_LOOKAHEAD]]
+    
+    return sum(valid_fixtures)
 
 async def fetch_player_data(fpl, player, team_fixtures):
     """Fetch and format player data."""
@@ -135,6 +138,7 @@ async def suggest_captain(fpl, team_fixtures, user_team):
             captain_score = (float(player.form) * 0.4) + (player.total_points * 0.3) + ((6 - fdr) * 0.3)
             captain_data.append({
                 "full_name": f"{player.first_name} {player.second_name}",
+                "team": player.team,  # Ensure the "team" column is included
                 "form": float(player.form),
                 "total_points": player.total_points,
                 "fixture_difficulty": fdr,
@@ -180,7 +184,7 @@ async def suggest_transfers_out(fpl, team_fixtures, user_team):
 
 
 async def suggest_bench_boost(fpl, team_fixtures, user_team):
-    """Suggest the best gameweek to use the Bench Boost chip."""
+    """Suggest the best gameweek to use the Bench Boost chip based on future fixtures."""
     try:
         bench_players = []
         bench_scores = []
@@ -191,24 +195,37 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
                 player_data = await fpl.get_player(player["element"])
                 bench_players.append(player_data)
 
-        # Calculate bench scores for bench players
-        for player in bench_players:
-            fdr = await calculate_team_fdr(team_fixtures, player.team)
-            bench_score = (float(player.form) * 0.5) + ((6 - fdr) * 0.5)
-            bench_scores.append({
-                "full_name": f"{player.first_name} {player.second_name}",
-                "form": float(player.form),
-                "fixture_difficulty": fdr,
-                "bench_score": bench_score
-            })
-
-        if not bench_scores:  # No bench players found
+        if not bench_players:  # No bench players found
             logger.warning("⚠️ No bench players found for Bench Boost suggestion.")
             return None
 
-        df = pd.DataFrame(bench_scores)
-        best_gw = df["bench_score"].idxmax() + 1  # Gameweek with the highest bench score
-        return f"Use Bench Boost in Gameweek {best_gw}"
+        # Log bench players for debugging
+        logger.debug("Bench Players:")
+        for player in bench_players:
+            logger.debug(f"- {player.first_name} {player.second_name} (Team: {player.team}, Form: {player.form})")
+
+        # Calculate bench scores for bench players across future gameweeks
+        best_gw = CURRENT_GAMEWEEK
+        best_bench_score = 0
+
+        for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
+            total_bench_score = 0
+
+            for player in bench_players:
+                fdr = await calculate_team_fdr(team_fixtures, player.team)
+                bench_score = (float(player.form) * 0.5) + ((6 - fdr) * 0.5)
+                total_bench_score += bench_score
+
+                # Log player's FDR and bench score for debugging
+                logger.debug(f"Gameweek {gw} - {player.first_name} {player.second_name}: Form = {player.form}, FDR = {fdr}, Bench Score = {bench_score}")
+
+            logger.debug(f"Gameweek {gw} - Total Bench Score: {total_bench_score}")
+
+            if total_bench_score > best_bench_score:
+                best_bench_score = total_bench_score
+                best_gw = gw
+
+        return f"Use Bench Boost in Gameweek {best_gw} (Total Bench Score: {best_bench_score:.2f})"
     except Exception as e:
         logger.error(f"❌ Error suggesting Bench Boost: {e}")
         raise
@@ -221,19 +238,41 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
         # Extract the team ID from the captain DataFrame
         captain_team_id = captain.iloc[0]["team"]  # Access the first row and the "team" column
         
+        # Log the captain's team ID for debugging
+        logger.debug(f"Captain's team ID: {captain_team_id}")
+        
+        # Log all team IDs in team_fixtures for debugging
+        logger.debug(f"Team IDs in team_fixtures: {list(team_fixtures.keys())}")
+        
         # Get the captain's fixture difficulty for the current and upcoming gameweeks
         captain_fixtures = team_fixtures.get(captain_team_id, [])
         
+        # Log the captain's fixtures for debugging
+        logger.debug(f"Captain's fixtures: {captain_fixtures}")
+        
+        if not captain_fixtures:
+            logger.warning(f"No fixture data found for team ID {captain_team_id}.")
+            return "No fixture data found for the captain's team. Save Triple Captain for a future gameweek."
+
         # Find the gameweek with the easiest fixture for the captain
         best_gw = CURRENT_GAMEWEEK  # Start with the current gameweek
         easiest_fdr = float("inf")  # Initialize with a high value
+        valid_fixtures_found = False
 
         for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
             if gw - 1 < len(captain_fixtures):  # Ensure we don't go out of bounds
                 fdr = captain_fixtures[gw - 1]  # Fixture difficulty for the gameweek
+                logger.debug(f"Gameweek {gw} - FDR: {fdr}")
                 if fdr < easiest_fdr:
                     easiest_fdr = fdr
                     best_gw = gw
+                    valid_fixtures_found = True
+            else:
+                logger.debug(f"No fixture data for Gameweek {gw}.")
+
+        if not valid_fixtures_found:  # No valid fixture difficulties found
+            logger.warning("No valid fixture difficulties found for the captain. Save Triple Captain for a future gameweek.")
+            return "No valid fixture difficulties found for the captain. Save Triple Captain for a future gameweek."
 
         return f"Use Triple Captain in Gameweek {best_gw} (Fixture Difficulty: {easiest_fdr})"
     except Exception as e:
