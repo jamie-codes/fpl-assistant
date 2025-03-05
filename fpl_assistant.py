@@ -2,6 +2,9 @@ import asyncio
 import json
 import os
 import logging
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import pandas as pd
 from fpl import FPL
@@ -11,6 +14,13 @@ import aiohttp
 TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
 LOG_FILE = "fpl_assistant.log"
+EMAIL_CONFIG = {
+    "smtp_server": "smtp.gmail.com",  # SMTP server (e.g., Gmail)
+    "smtp_port": 587,  # SMTP port (587 for TLS)
+    "sender_email": "your_email@gmail.com",  # Your email address
+    "sender_password": "your_password",  # Your email password or app-specific password
+    "receiver_email": "receiver_email@gmail.com"  # Recipient email address
+}
 
 # Set up logging
 logging.basicConfig(
@@ -159,6 +169,42 @@ async def suggest_transfers_out(fpl, team_fixtures, user_team):
         raise
 
 
+async def suggest_bench_boost(fpl, team_fixtures, user_team):
+    """Suggest the best gameweek to use the Bench Boost chip."""
+    try:
+        my_players = [await fpl.get_player(p["element"]) for p in user_team]
+        bench_players = [player for player in my_players if player.element_type in [12, 13, 14]]  # Bench players
+        bench_scores = []
+
+        for player in bench_players:
+            fdr = await calculate_team_fdr(team_fixtures, player.team)
+            bench_score = (float(player.form) * 0.5) + ((6 - fdr) * 0.5)
+            bench_scores.append({
+                "full_name": f"{player.first_name} {player.second_name}",
+                "form": float(player.form),
+                "fixture_difficulty": fdr,
+                "bench_score": bench_score
+            })
+
+        df = pd.DataFrame(bench_scores)
+        best_gw = df["bench_score"].idxmax() + 1  # Gameweek with the highest bench score
+        return best_gw
+    except Exception as e:
+        logger.error(f"❌ Error suggesting Bench Boost: {e}")
+        raise
+
+
+async def suggest_triple_captain(fpl, team_fixtures, user_team):
+    """Suggest the best gameweek to use the Triple Captain chip."""
+    try:
+        captain, _ = await suggest_captain(fpl, team_fixtures, user_team)
+        best_gw = captain["fixture_difficulty"].idxmin() + 1  # Gameweek with the easiest fixture for the captain
+        return best_gw
+    except Exception as e:
+        logger.error(f"❌ Error suggesting Triple Captain: {e}")
+        raise
+
+
 async def export_dataframes(best_players, transfers_out):
     """Export dataframes to CSV and Excel files."""
     try:
@@ -173,6 +219,26 @@ async def export_dataframes(best_players, transfers_out):
         logger.info("📁 Exported suggestions to CSV and Excel.")
     except Exception as e:
         logger.error(f"❌ Error exporting dataframes: {e}")
+        raise
+
+
+async def send_email(subject, body):
+    """Send an email with the given subject and body."""
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_CONFIG["sender_email"]
+        msg["To"] = EMAIL_CONFIG["receiver_email"]
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
+            server.starttls()
+            server.login(EMAIL_CONFIG["sender_email"], EMAIL_CONFIG["sender_password"])
+            server.send_message(msg)
+
+        logger.info("📧 Email sent successfully.")
+    except Exception as e:
+        logger.error(f"❌ Error sending email: {e}")
         raise
 
 
@@ -203,7 +269,26 @@ async def main():
             logger.info("Captain: %s", captain)
             logger.info("Vice-Captain: %s", vice_captain)
 
+            logger.info("\n🌟 Bench Boost Suggestion:")
+            bench_boost_gw = await suggest_bench_boost(fpl, team_fixtures, user_team)
+            logger.info(f"Use Bench Boost in Gameweek {bench_boost_gw}")
+
+            logger.info("\n🌟 Triple Captain Suggestion:")
+            triple_captain_gw = await suggest_triple_captain(fpl, team_fixtures, user_team)
+            logger.info(f"Use Triple Captain in Gameweek {triple_captain_gw}")
+
             await export_dataframes(best_players, transfers_out)
+
+            # Send email with suggestions
+            email_body = (
+                f"🔼 Best Players to Pick:\n{best_players}\n\n"
+                f"🔽 Suggested Transfers Out:\n{transfers_out}\n\n"
+                f"🎖 Captaincy Recommendations:\nCaptain: {captain}\nVice-Captain: {vice_captain}\n\n"
+                f"🌟 Bench Boost Suggestion: Use in Gameweek {bench_boost_gw}\n"
+                f"🌟 Triple Captain Suggestion: Use in Gameweek {triple_captain_gw}"
+            )
+            await send_email("Your Weekly FPL Suggestions", email_body)
+
     except Exception as e:
         logger.error(f"❌ Fatal error in main function: {e}")
 
