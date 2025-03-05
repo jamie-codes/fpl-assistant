@@ -17,9 +17,9 @@ LOG_FILE = "fpl_assistant.log"
 EMAIL_CONFIG = {
     "smtp_server": "smtp.gmail.com",  # SMTP server (e.g., Gmail)
     "smtp_port": 587,  # SMTP port (587 for TLS)
-    "sender_email": "your_email@gmail.com",  # Your email address
-    "sender_password": "your_password",  # Your email password or app-specific password
-    "receiver_email": "receiver_email@gmail.com"  # Recipient email address
+    "sender_email": "user.invalid@gmail.com",  # Your email address
+    "sender_password": "vyeo czke dzpd rzws",  # Your email password or app-specific password
+    "receiver_email": "user.invalid@gmail.com"  # Recipient email address
 }
 
 # Set up logging
@@ -76,7 +76,7 @@ async def calculate_team_fdr(team_fixtures, team_id):
     return sum(fixtures[:FIXTURE_LOOKAHEAD])
 
 
-async def fetch_player_data(fpl, player):
+async def fetch_player_data(fpl, player, team_fixtures):
     """Fetch and format player data."""
     try:
         fdr = await calculate_team_fdr(team_fixtures, player.team)
@@ -99,8 +99,8 @@ async def suggest_best_players(fpl, team_fixtures, top_n=10):
         players = await fpl.get_players()
         player_data = []
         for player in players:
-            data = await fetch_player_data(fpl, player)
-            if data:
+            data = await fetch_player_data(fpl, player, team_fixtures)
+            if data:  # Only append valid player data
                 player_data.append(data)
 
         df = pd.DataFrame(player_data)
