@@ -1,6 +1,7 @@
 
 import asyncio
 import json
+import os
 from datetime import datetime
 import pandas as pd
 from fpl import FPL
@@ -11,7 +12,9 @@ FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
 
 
 def load_cookies():
-    with open("cookies.json", "r") as f:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cookies_path = os.path.join(base_dir, "cookies.json")
+    with open(cookies_path, "r") as f:
         return json.load(f)
 
 
@@ -86,7 +89,7 @@ async def export_dataframes(best_players, transfers_out):
     best_players.to_csv(f'best_players_{timestamp}.csv', index=False)
     transfers_out.to_csv(f'transfers_out_{timestamp}.csv', index=False)
 
-    with pd.ExcelWriter(f'fpl_suggestions_{timestamp}.xlsx") as writer:
+    with pd.ExcelWriter(f'fpl_suggestions_{timestamp}.xlsx') as writer:
         best_players.to_excel(writer, sheet_name='Best Players', index=False)
         transfers_out.to_excel(writer, sheet_name='Transfers Out', index=False)
 
