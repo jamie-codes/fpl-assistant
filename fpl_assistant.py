@@ -182,10 +182,16 @@ async def suggest_transfers_out(fpl, team_fixtures, user_team):
 async def suggest_bench_boost(fpl, team_fixtures, user_team):
     """Suggest the best gameweek to use the Bench Boost chip."""
     try:
-        my_players = [await fpl.get_player(p["element"]) for p in user_team]
-        bench_players = [player for player in my_players if player.element_type in [12, 13, 14]]  # Bench players
+        bench_players = []
         bench_scores = []
 
+        # Identify bench players based on their position in the user's team
+        for player in user_team:
+            if player["position"] >= 12:  # Bench players have position 12, 13, 14, or 15
+                player_data = await fpl.get_player(player["element"])
+                bench_players.append(player_data)
+
+        # Calculate bench scores for bench players
         for player in bench_players:
             fdr = await calculate_team_fdr(team_fixtures, player.team)
             bench_score = (float(player.form) * 0.5) + ((6 - fdr) * 0.5)
@@ -202,11 +208,10 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
 
         df = pd.DataFrame(bench_scores)
         best_gw = df["bench_score"].idxmax() + 1  # Gameweek with the highest bench score
-        return best_gw
+        return f"Use Bench Boost in Gameweek {best_gw}"
     except Exception as e:
         logger.error(f"❌ Error suggesting Bench Boost: {e}")
         raise
-
 
 async def suggest_triple_captain(fpl, team_fixtures, user_team):
     """Suggest the best gameweek to use the Triple Captain chip based on CURRENT_GAMEWEEK."""
@@ -335,9 +340,9 @@ async def main():
             logger.info("Vice-Captain: %s", vice_captain)
 
             logger.info("\n🌟 Bench Boost Suggestion:")
-            bench_boost_gw = await suggest_bench_boost(fpl, team_fixtures, user_team)
-            if bench_boost_gw:
-                logger.info(f"Use Bench Boost in Gameweek {bench_boost_gw}")
+            bench_boost_suggestion = await suggest_bench_boost(fpl, team_fixtures, user_team)
+            if bench_boost_suggestion:
+                logger.info(bench_boost_suggestion)
             else:
                 logger.info("No bench players found for Bench Boost suggestion.")
 
@@ -360,7 +365,7 @@ async def main():
                 f"🔼 Best Players to Pick:\n{best_players}\n\n"
                 f"🔽 Suggested Transfers Out:\n{transfers_out}\n\n"
                 f"🎖 Captaincy Recommendations:\nCaptain: {captain}\nVice-Captain: {vice_captain}\n\n"
-                f"🌟 Bench Boost Suggestion: Use in Gameweek {bench_boost_gw}\n"
+                f"🌟 Bench Boost Suggestion: {bench_boost_suggestion}\n"
                 f"🌟 Triple Captain Suggestion: {triple_captain_suggestion}\n\n"
                 f"🃏 Wildcard Suggestion: {wildcard_suggestion}\n\n"
                 f"🎯 Free Hit Suggestion: {free_hit_suggestion}"
