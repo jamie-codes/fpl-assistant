@@ -1,8 +1,10 @@
+Author: Jamie McKee
+
 
 # ⚽ Fantasy Premier League (FPL) Assistant
 
 This Python script helps you manage your Fantasy Premier League (FPL) team by:
-- 🔍 Logging into your FPL account.
+- 🔍 Authenticating with your full FPL browser session cookies.
 - 📊 Analyzing global player data.
 - 📅 Evaluating upcoming fixture difficulty (FDR).
 - 🧠 Suggesting the best players to pick for upcoming gameweeks.
@@ -12,7 +14,7 @@ This Python script helps you manage your Fantasy Premier League (FPL) team by:
 ---
 
 ## 🚀 Features
-✅ Secure FPL login (using your email and password).  
+✅ Secure FPL login via the `fpl` library using full browser cookies.  
 ✅ Automatically fetch your current team.  
 ✅ Analyze player form, points, and fixture difficulty (next 5 matches).  
 ✅ Suggest the best players to bring in.  
@@ -24,34 +26,49 @@ This Python script helps you manage your Fantasy Premier League (FPL) team by:
 ## 🛠 Requirements
 - Python 3.8+
 - Packages:
-  - `requests`
+  - `fpl`
+  - `aiohttp`
   - `pandas`
-  - `getpass`
 
 Install dependencies with:
 ```bash
-pip install requests pandas
+pip install fpl aiohttp pandas
 ```
+
+---
+
+## 🔐 Setup Authentication
+
+### How to export your FPL cookies:
+1. Log into [https://fantasy.premierleague.com/](https://fantasy.premierleague.com/) in your browser.
+2. Open **Developer Tools** (F12 or right-click → Inspect).
+3. Go to **Application → Cookies → https://fantasy.premierleague.com/**.
+4. Copy all cookie names and values.
+5. Save them into a file named `cookies.json` in this format:
+   ```json
+   {
+     "pl_profile": "your_value_here",
+     "sessionid": "your_value_here",
+     "csrftoken": "your_value_here",
+     "other_cookie_name": "other_cookie_value_here"
+   }
+   ```
+
+The script will automatically load this `cookies.json` file for authentication.
 
 ---
 
 ## 🔧 How to Use
 
 1. **Clone or download the script.**
-
-2. **Run the script:**
+2. **Ensure your `cookies.json` file is set with your cookies.**
+3. **Run the script:**
    ```bash
    python fpl_assistant.py
    ```
 
-3. **Enter your FPL credentials** when prompted:
-   ```
-   Enter your FPL email:
-   Enter your FPL password:
-   ```
-
 4. The script will:
-   - Log in to your FPL account.
+   - Authenticate using your full FPL session cookies.
    - Retrieve your current team (using your FPL Team ID).
    - Analyze players and fixtures.
    - Print suggestions directly in the terminal.
@@ -90,8 +107,8 @@ FIXTURE_LOOKAHEAD = 5       # Number of upcoming fixtures to consider
 ---
 
 ## ⚠️ Important Notes
-- Your login details are only used during the session and are not stored.
-- Make sure your account uses basic authentication (no two-factor for now).
+- Your cookies are only used during the session and are not stored elsewhere.
+- Make sure your cookies are current and not expired.
 - Use responsibly and avoid excessive requests to the FPL servers.
 
 ---
