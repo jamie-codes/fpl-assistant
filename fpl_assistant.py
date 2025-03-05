@@ -22,12 +22,12 @@ EMAIL_CONFIG = {
     "receiver_email": "user.invalid@gmail.com"  # Recipient email address
 }
 
-# Set up logging
+# Set up logging with UTF-8 encoding
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
         logging.StreamHandler()
     ]
 )
@@ -186,6 +186,10 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
                 "bench_score": bench_score
             })
 
+        if not bench_scores:  # No bench players found
+            logger.warning("⚠️ No bench players found for Bench Boost suggestion.")
+            return None
+
         df = pd.DataFrame(bench_scores)
         best_gw = df["bench_score"].idxmax() + 1  # Gameweek with the highest bench score
         return best_gw
@@ -271,7 +275,10 @@ async def main():
 
             logger.info("\n🌟 Bench Boost Suggestion:")
             bench_boost_gw = await suggest_bench_boost(fpl, team_fixtures, user_team)
-            logger.info(f"Use Bench Boost in Gameweek {bench_boost_gw}")
+            if bench_boost_gw:
+                logger.info(f"Use Bench Boost in Gameweek {bench_boost_gw}")
+            else:
+                logger.info("No bench players found for Bench Boost suggestion.")
 
             logger.info("\n🌟 Triple Captain Suggestion:")
             triple_captain_gw = await suggest_triple_captain(fpl, team_fixtures, user_team)
