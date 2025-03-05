@@ -218,8 +218,11 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
     try:
         captain, _ = await suggest_captain(fpl, team_fixtures, user_team)
         
+        # Extract the team ID from the captain DataFrame
+        captain_team_id = captain.iloc[0]["team"]  # Access the first row and the "team" column
+        
         # Get the captain's fixture difficulty for the current and upcoming gameweeks
-        captain_fixtures = team_fixtures.get(captain["team"], [])
+        captain_fixtures = team_fixtures.get(captain_team_id, [])
         
         # Find the gameweek with the easiest fixture for the captain
         best_gw = CURRENT_GAMEWEEK  # Start with the current gameweek
@@ -236,7 +239,6 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
     except Exception as e:
         logger.error(f"❌ Error suggesting Triple Captain: {e}")
         raise
-
 
 async def suggest_wildcard():
     """Suggest when to play the Wildcard chip."""
