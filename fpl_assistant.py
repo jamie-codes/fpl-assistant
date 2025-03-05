@@ -1,123 +1,211 @@
-
 import asyncio
 import json
 import os
+import logging
 from datetime import datetime
 import pandas as pd
 from fpl import FPL
 import aiohttp
 
+# Configuration
 TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
+LOG_FILE = "fpl_assistant.log"
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 
 def load_cookies():
+    """Load cookies from cookies.json."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cookies_path = os.path.join(base_dir, "cookies.json")
-    with open(cookies_path, "r") as f:
-        return json.load(f)
+    try:
+        with open(cookies_path, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error("❌ cookies.json file not found. Please ensure it exists.")
+        raise
+    except json.JSONDecodeError:
+        logger.error("❌ cookies.json is not a valid JSON file.")
+        raise
 
 
 async def get_fixture_difficulties(fpl):
-    fixtures = await fpl.get_fixtures()
-    team_fixtures = {}
-    for fixture in fixtures:
-        if fixture.finished or fixture.event is None:
-            continue
-        for team_id, difficulty in [
-            (fixture.team_h, fixture.team_h_difficulty),
-            (fixture.team_a, fixture.team_a_difficulty)
-        ]:
-            if team_id not in team_fixtures:
-                team_fixtures[team_id] = []
-            team_fixtures[team_id].append(difficulty)
-    return team_fixtures
+    """Fetch fixture difficulties for all teams."""
+    try:
+        fixtures = await fpl.get_fixtures()
+        team_fixtures = {}
+        for fixture in fixtures:
+            if fixture.finished or fixture.event is None:
+                continue
+            for team_id, difficulty in [
+                (fixture.team_h, fixture.team_h_difficulty),
+                (fixture.team_a, fixture.team_a_difficulty)
+            ]:
+                if team_id not in team_fixtures:
+                    team_fixtures[team_id] = []
+                team_fixtures[team_id].append(difficulty)
+        return team_fixtures
+    except Exception as e:
+        logger.error(f"❌ Error fetching fixture difficulties: {e}")
+        raise
 
 
 async def calculate_team_fdr(team_fixtures, team_id):
+    """Calculate the total fixture difficulty rating (FDR) for a team."""
     fixtures = team_fixtures.get(team_id, [])
     return sum(fixtures[:FIXTURE_LOOKAHEAD])
 
 
-async def suggest_best_players(fpl, team_fixtures, top_n=10):
-    players = await fpl.get_players()
-    player_data = []
-    for player in players:
+async def fetch_player_data(fpl, player):
+    """Fetch and format player data."""
+    try:
         fdr = await calculate_team_fdr(team_fixtures, player.team)
-        player_data.append({
+        return {
             "full_name": f"{player.first_name} {player.second_name}",
             "team": player.team,
             "form": float(player.form),
             "total_points": player.total_points,
             "now_cost": player.now_cost / 10,
             "fixture_difficulty": fdr
-        })
+        }
+    except Exception as e:
+        logger.error(f"❌ Error fetching data for player {player.first_name} {player.second_name}: {e}")
+        return None
 
-    df = pd.DataFrame(player_data)
-    top_players = df.sort_values(
-        by=["form", "total_points", "fixture_difficulty"],
-        ascending=[False, False, True]
-    ).head(top_n)
 
-    return top_players
+async def suggest_best_players(fpl, team_fixtures, top_n=10):
+    """Suggest the best players to pick based on form, points, and FDR."""
+    try:
+        players = await fpl.get_players()
+        player_data = []
+        for player in players:
+            data = await fetch_player_data(fpl, player)
+            if data:
+                player_data.append(data)
+
+        df = pd.DataFrame(player_data)
+        top_players = df.sort_values(
+            by=["form", "total_points", "fixture_difficulty"],
+            ascending=[False, False, True]
+        ).head(top_n)
+
+        return top_players
+    except Exception as e:
+        logger.error(f"❌ Error suggesting best players: {e}")
+        raise
+
+
+async def suggest_captain(fpl, team_fixtures, user_team):
+    """Suggest captain and vice-captain based on form, points, and FDR."""
+    try:
+        my_players = [await fpl.get_player(p["element"]) for p in user_team]
+        captain_data = []
+        for player in my_players:
+            fdr = await calculate_team_fdr(team_fixtures, player.team)
+            captain_score = (float(player.form) * 0.4) + (player.total_points * 0.3) + ((6 - fdr) * 0.3)
+            captain_data.append({
+                "full_name": f"{player.first_name} {player.second_name}",
+                "form": float(player.form),
+                "total_points": player.total_points,
+                "fixture_difficulty": fdr,
+                "captain_score": captain_score
+            })
+
+        df = pd.DataFrame(captain_data)
+        captain = df.sort_values(by="captain_score", ascending=False).head(1)
+        vice_captain = df.sort_values(by="captain_score", ascending=False).iloc[1:2]
+
+        return captain, vice_captain
+    except Exception as e:
+        logger.error(f"❌ Error suggesting captain: {e}")
+        raise
 
 
 async def suggest_transfers_out(fpl, team_fixtures, user_team):
-    my_players = [await fpl.get_player(p["element"]) for p in user_team]
-    player_data = []
-    for player in my_players:
-        fdr = await calculate_team_fdr(team_fixtures, player.team)
-        player_data.append({
-            "full_name": f"{player.first_name} {player.second_name}",
-            "form": float(player.form),
-            "status": player.status,
-            "total_points": player.total_points,
-            "fixture_difficulty": fdr
-        })
+    """Suggest players to transfer out based on form, status, and FDR."""
+    try:
+        my_players = [await fpl.get_player(p["element"]) for p in user_team]
+        player_data = []
+        for player in my_players:
+            fdr = await calculate_team_fdr(team_fixtures, player.team)
+            player_data.append({
+                "full_name": f"{player.first_name} {player.second_name}",
+                "form": float(player.form),
+                "status": player.status,
+                "total_points": player.total_points,
+                "fixture_difficulty": fdr
+            })
 
-    df = pd.DataFrame(player_data)
-    transfers_out = df[
-        (df["form"] < 2.0) |
-        (df["status"] != "a") |
-        (df["fixture_difficulty"] > (FIXTURE_LOOKAHEAD * 3))
-    ]
+        df = pd.DataFrame(player_data)
+        transfers_out = df[
+            (df["form"] < 2.0) |
+            (df["status"] != "a") |
+            (df["fixture_difficulty"] > (FIXTURE_LOOKAHEAD * 3))
+        ]
 
-    return transfers_out
+        return transfers_out
+    except Exception as e:
+        logger.error(f"❌ Error suggesting transfers out: {e}")
+        raise
 
 
 async def export_dataframes(best_players, transfers_out):
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-    best_players.to_csv(f'best_players_{timestamp}.csv', index=False)
-    transfers_out.to_csv(f'transfers_out_{timestamp}.csv', index=False)
+    """Export dataframes to CSV and Excel files."""
+    try:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        best_players.to_csv(f'best_players_{timestamp}.csv', index=False)
+        transfers_out.to_csv(f'transfers_out_{timestamp}.csv', index=False)
 
-    with pd.ExcelWriter(f'fpl_suggestions_{timestamp}.xlsx') as writer:
-        best_players.to_excel(writer, sheet_name='Best Players', index=False)
-        transfers_out.to_excel(writer, sheet_name='Transfers Out', index=False)
+        with pd.ExcelWriter(f'fpl_suggestions_{timestamp}.xlsx') as writer:
+            best_players.to_excel(writer, sheet_name='Best Players', index=False)
+            transfers_out.to_excel(writer, sheet_name='Transfers Out', index=False)
 
-    print(f"📁 Exported suggestions to CSV and Excel.")
+        logger.info("📁 Exported suggestions to CSV and Excel.")
+    except Exception as e:
+        logger.error(f"❌ Error exporting dataframes: {e}")
+        raise
 
 
 async def main():
-    cookies = load_cookies()
-    
-    async with aiohttp.ClientSession(cookies=cookies) as session:
-        fpl = FPL(session)
-        print("✅ Logged in using full browser cookies!")
+    """Main function to run the FPL assistant."""
+    try:
+        cookies = load_cookies()
 
-        user = await fpl.get_user(TEAM_ID)
-        user_team = await user.get_team()
+        async with aiohttp.ClientSession(cookies=cookies) as session:
+            fpl = FPL(session)
+            logger.info("✅ Logged in using full browser cookies!")
 
-        team_fixtures = await get_fixture_difficulties(fpl)
+            user = await fpl.get_user(TEAM_ID)
+            user_team = await user.get_team()
 
-        print("\n🔼 Best Players to Pick:")
-        best_players = await suggest_best_players(fpl, team_fixtures)
-        print(best_players)
+            team_fixtures = await get_fixture_difficulties(fpl)
 
-        print("\n🔽 Suggested Transfers Out:")
-        transfers_out = await suggest_transfers_out(fpl, team_fixtures, user_team)
-        print(transfers_out)
+            logger.info("\n🔼 Best Players to Pick:")
+            best_players = await suggest_best_players(fpl, team_fixtures)
+            logger.info(best_players)
 
-        await export_dataframes(best_players, transfers_out)
+            logger.info("\n🔽 Suggested Transfers Out:")
+            transfers_out = await suggest_transfers_out(fpl, team_fixtures, user_team)
+            logger.info(transfers_out)
+
+            logger.info("\n🎖 Captaincy Recommendations:")
+            captain, vice_captain = await suggest_captain(fpl, team_fixtures, user_team)
+            logger.info("Captain: %s", captain)
+            logger.info("Vice-Captain: %s", vice_captain)
+
+            await export_dataframes(best_players, transfers_out)
+    except Exception as e:
+        logger.error(f"❌ Fatal error in main function: {e}")
 
 
 if __name__ == "__main__":
