@@ -9,17 +9,27 @@ from datetime import datetime
 import pandas as pd
 from fpl import FPL
 import aiohttp
+import json
+from dotenv import load_dotenv
 
 # Configuration
 TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
 LOG_FILE = "fpl_assistant.log"
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Access the email password
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+# Use EMAIL_PASSWORD in your email configuration
 EMAIL_CONFIG = {
-    "smtp_server": "smtp.gmail.com",  # SMTP server (e.g., Gmail)
-    "smtp_port": 587,  # SMTP port (587 for TLS)
-    "sender_email": "user.invalid@gmail.com",  # Your email address
-    "sender_password": "vyeo czke dzpd rzws",  # Your email password or app-specific password
-    "receiver_email": "user.invalid@gmail.com"  # Recipient email address
+    "smtp_server": "smtp.gmail.com",
+    "smtp_port": 587,
+    "sender_email": "user.invalid@gmail.com",
+    "sender_password": EMAIL_PASSWORD,  # Use the environment variable
+    "receiver_email": "user.invalid@gmail.com"
 }
 
 # Set up logging with UTF-8 encoding

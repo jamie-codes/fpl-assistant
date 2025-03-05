@@ -1,2 +1,7 @@
 .env
 cookies.json
+config.json
+best_players*.*
+fpl_suggestions*.*
+transfers_out*.*
+fpl_assistant.log
