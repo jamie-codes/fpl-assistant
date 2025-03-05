@@ -9,13 +9,13 @@ from datetime import datetime
 import pandas as pd
 from fpl import FPL
 import aiohttp
-import json
 from dotenv import load_dotenv
 
 # Configuration
 TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
 LOG_FILE = "fpl_assistant.log"
+CURRENT_GAMEWEEK = 28  # Update this to the current gameweek
 
 # Load environment variables from .env file
 load_dotenv()
@@ -209,13 +209,64 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
 
 
 async def suggest_triple_captain(fpl, team_fixtures, user_team):
-    """Suggest the best gameweek to use the Triple Captain chip."""
+    """Suggest the best gameweek to use the Triple Captain chip based on CURRENT_GAMEWEEK."""
     try:
         captain, _ = await suggest_captain(fpl, team_fixtures, user_team)
-        best_gw = captain["fixture_difficulty"].idxmin() + 1  # Gameweek with the easiest fixture for the captain
-        return best_gw
+        
+        # Get the captain's fixture difficulty for the current and upcoming gameweeks
+        captain_fixtures = team_fixtures.get(captain["team"], [])
+        
+        # Find the gameweek with the easiest fixture for the captain
+        best_gw = CURRENT_GAMEWEEK  # Start with the current gameweek
+        easiest_fdr = float("inf")  # Initialize with a high value
+
+        for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
+            if gw - 1 < len(captain_fixtures):  # Ensure we don't go out of bounds
+                fdr = captain_fixtures[gw - 1]  # Fixture difficulty for the gameweek
+                if fdr < easiest_fdr:
+                    easiest_fdr = fdr
+                    best_gw = gw
+
+        return f"Use Triple Captain in Gameweek {best_gw} (Fixture Difficulty: {easiest_fdr})"
     except Exception as e:
         logger.error(f"❌ Error suggesting Triple Captain: {e}")
+        raise
+
+
+async def suggest_wildcard():
+    """Suggest when to play the Wildcard chip."""
+    if CURRENT_GAMEWEEK <= 20:
+        return "Play Wildcard in the first half of the season (before Gameweek 20)."
+    else:
+        return "Play Wildcard in the second half of the season (after Gameweek 20)."
+
+
+async def suggest_free_hit(fpl):
+    """Suggest when to play the Free Hit chip based on blank or double gameweeks."""
+    try:
+        fixtures = await fpl.get_fixtures()
+        gameweek_fixtures = {}
+
+        # Count fixtures per gameweek
+        for fixture in fixtures:
+            if fixture.event is None or fixture.finished:
+                continue
+            if fixture.event not in gameweek_fixtures:
+                gameweek_fixtures[fixture.event] = 0
+            gameweek_fixtures[fixture.event] += 1
+
+        # Identify blank and double gameweeks
+        blank_gameweeks = [gw for gw, count in gameweek_fixtures.items() if count < 5]
+        double_gameweeks = [gw for gw, count in gameweek_fixtures.items() if count > 10]
+
+        if blank_gameweeks:
+            return f"Play Free Hit in a Blank Gameweek (BGW): {blank_gameweeks}"
+        elif double_gameweeks:
+            return f"Play Free Hit in a Double Gameweek (DGW): {double_gameweeks}"
+        else:
+            return "No clear Free Hit opportunity found. Save it for a future blank or double gameweek."
+    except Exception as e:
+        logger.error(f"❌ Error suggesting Free Hit: {e}")
         raise
 
 
@@ -291,8 +342,16 @@ async def main():
                 logger.info("No bench players found for Bench Boost suggestion.")
 
             logger.info("\n🌟 Triple Captain Suggestion:")
-            triple_captain_gw = await suggest_triple_captain(fpl, team_fixtures, user_team)
-            logger.info(f"Use Triple Captain in Gameweek {triple_captain_gw}")
+            triple_captain_suggestion = await suggest_triple_captain(fpl, team_fixtures, user_team)
+            logger.info(triple_captain_suggestion)
+
+            logger.info("\n🃏 Wildcard Suggestion:")
+            wildcard_suggestion = await suggest_wildcard()
+            logger.info(wildcard_suggestion)
+
+            logger.info("\n🎯 Free Hit Suggestion:")
+            free_hit_suggestion = await suggest_free_hit(fpl)
+            logger.info(free_hit_suggestion)
 
             await export_dataframes(best_players, transfers_out)
 
@@ -302,7 +361,9 @@ async def main():
                 f"🔽 Suggested Transfers Out:\n{transfers_out}\n\n"
                 f"🎖 Captaincy Recommendations:\nCaptain: {captain}\nVice-Captain: {vice_captain}\n\n"
                 f"🌟 Bench Boost Suggestion: Use in Gameweek {bench_boost_gw}\n"
-                f"🌟 Triple Captain Suggestion: Use in Gameweek {triple_captain_gw}"
+                f"🌟 Triple Captain Suggestion: {triple_captain_suggestion}\n\n"
+                f"🃏 Wildcard Suggestion: {wildcard_suggestion}\n\n"
+                f"🎯 Free Hit Suggestion: {free_hit_suggestion}"
             )
             await send_email("Your Weekly FPL Suggestions", email_body)
 
