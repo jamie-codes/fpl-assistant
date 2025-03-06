@@ -334,13 +334,15 @@ async def export_dataframes(best_players, transfers_out):
 
 
 async def send_email(subject, body):
-    """Send an email with the given subject and body."""
+    """Send an email with the given subject and body (HTML formatted)."""
     try:
         msg = MIMEMultipart()
         msg["From"] = EMAIL_CONFIG["sender_email"]
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
+
+        # Attach the HTML body
+        msg.attach(MIMEText(body, "html"))
 
         with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
             server.starttls()
@@ -401,16 +403,40 @@ async def main():
 
             await export_dataframes(best_players, transfers_out)
 
+            # Convert dataframes to HTML tables
+            best_players_html = best_players.to_html(index=False)
+            transfers_out_html = transfers_out.to_html(index=False)
+
+            # Create the email body with HTML formatting
+            email_body = f"""
+            <html>
+                <body>
+                    <h2>🔼 Best Players to Pick</h2>
+                    {best_players_html}
+                    <br>
+                    <h2>🔽 Suggested Transfers Out</h2>
+                    {transfers_out_html}
+                    <br>
+                    <h2>🎖 Captaincy Recommendations</h2>
+                    <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
+                    <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
+                    <br>
+                    <h2>🌟 Bench Boost Suggestion</h2>
+                    <p>{bench_boost_suggestion}</p>
+                    <br>
+                    <h2>🌟 Triple Captain Suggestion</h2>
+                    <p>{triple_captain_suggestion}</p>
+                    <br>
+                    <h2>🃏 Wildcard Suggestion</h2>
+                    <p>{wildcard_suggestion}</p>
+                    <br>
+                    <h2>🎯 Free Hit Suggestion</h2>
+                    <p>{free_hit_suggestion}</p>
+                </body>
+            </html>
+            """
+
             # Send email with suggestions
-            email_body = (
-                f"🔼 Best Players to Pick:\n{best_players}\n\n"
-                f"🔽 Suggested Transfers Out:\n{transfers_out}\n\n"
-                f"🎖 Captaincy Recommendations:\nCaptain: {captain}\nVice-Captain: {vice_captain}\n\n"
-                f"🌟 Bench Boost Suggestion: {bench_boost_suggestion}\n"
-                f"🌟 Triple Captain Suggestion: {triple_captain_suggestion}\n\n"
-                f"🃏 Wildcard Suggestion: {wildcard_suggestion}\n\n"
-                f"🎯 Free Hit Suggestion: {free_hit_suggestion}"
-            )
             await send_email("Your Weekly FPL Suggestions", email_body)
 
     except Exception as e:
