@@ -16,7 +16,6 @@ TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
 LOG_FILE = "fpl_assistant.log"
 
-
 # Load environment variables from .env file
 load_dotenv()
 
