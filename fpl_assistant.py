@@ -105,26 +105,40 @@ async def get_fixture_difficulties(fpl):
 async def calculate_team_fdr(team_fixtures, team_id):
     """Calculate the total fixture difficulty rating (FDR) for a team over the next few gameweeks."""
     fixtures = team_fixtures.get(team_id, {})
-    
+
     # Get the FDRs for the next FIXTURE_LOOKAHEAD gameweeks
     upcoming_fdrs = []
     for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
         fdr = fixtures.get(gw, 5)  # Default to 5 if no fixture data
-        capped_fdr = max(1, min(fdr, 5))
+        capped_fdr = max(1, min(float(fdr), 5))
         upcoming_fdrs.append(capped_fdr)
-    
+
     return sum(upcoming_fdrs)
 
 async def fetch_player_data(fpl, player, team_fixtures):
     """Fetch and format player data."""
     try:
         fdr = await calculate_team_fdr(team_fixtures, player.team)
+
+        # Map element_type to position
+        position_map = {
+            1: "Goalkeeper",
+            2: "Defender",
+            3: "Midfielder",
+            4: "Forward"
+        }
+        position = position_map.get(player.element_type, "Unknown")
+
+        form = float(player.form) if player.form not in [None, ""] else 0.0
+        now_cost = player.now_cost / 10 if player.now_cost else 0.0
+
         return {
             "full_name": f"{player.first_name} {player.second_name}",
             "team": player.team,
-            "form": float(player.form),
+            "position": position,
+            "form": form,
             "total_points": player.total_points,
-            "now_cost": player.now_cost / 10,
+            "now_cost": now_cost,
             "fixture_difficulty": fdr
         }
     except Exception as e:
@@ -294,9 +308,19 @@ async def analyze_current_team(fpl, team_fixtures, user_team):
 
         for player in my_players:
             fdr = await calculate_team_fdr(team_fixtures, player.team)
+            
+            # Map element_type to position
+            position_map = {
+                1: "Goalkeeper",
+                2: "Defender",
+                3: "Midfielder",
+                4: "Forward"
+            }
+            position = position_map.get(player.element_type, "Unknown")
+
             team_data.append({
                 "full_name": f"{player.first_name} {player.second_name}",
-                "position": player.element_type,  # 1: GK, 2: DEF, 3: MID, 4: FWD
+                "position": position,  # Add position mapping
                 "form": float(player.form),
                 "total_points": player.total_points,
                 "now_cost": player.now_cost / 10,
@@ -332,7 +356,16 @@ async def suggest_replacement(fpl, team_fixtures, player):
         player_data = []
 
         for p in players:
-            if p.element_type == player["position"] and p.now_cost / 10 <= player["now_cost"] + 1.0:  # Allow slight budget increase
+            # Map element_type to position
+            position_map = {
+                1: "Goalkeeper",
+                2: "Defender",
+                3: "Midfielder",
+                4: "Forward"
+            }
+            position = position_map.get(p.element_type, "Unknown")
+
+            if position == player["position"] and p.now_cost / 10 <= player["now_cost"] + 1.0:  # Allow slight budget increase
                 data = await fetch_player_data(fpl, p, team_fixtures)
                 if data:
                     player_data.append(data)
@@ -467,8 +500,13 @@ async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
         df = pd.DataFrame(player_data)
 
         # Identify players with two fixtures in the same gameweek
-        dgw_players = df[df["fixture_difficulty"] <= 2]  # Example: prioritize easy fixtures
+        # Adjust the criteria to be less strict
+        dgw_players = df[df["fixture_difficulty"] <= 4]  # Changed from 3 to 4
         dgw_players = dgw_players.sort_values(by=["form", "total_points"], ascending=[False, False])
+
+        # Log the players being considered
+        logger.debug("Players considered for DGW team:")
+        logger.debug(dgw_players)
 
         # Ensure the team is within budget
         while dgw_players["now_cost"].sum() > budget:
@@ -498,6 +536,14 @@ async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_tr
 
         df = pd.DataFrame(player_data)
 
+        # Ensure correct data types
+        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
+        df["form"] = pd.to_numeric(df["form"], errors="coerce")
+        df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
+
+        # Drop rows with NaN values in critical columns
+        df = df.dropna(subset=["now_cost", "form", "fixture_difficulty"])
+
         # Sort players by form, points, and FDR
         best_players = df.sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True])
 
@@ -507,7 +553,8 @@ async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_tr
             # Find a better replacement within budget
             replacement = best_players[
                 (best_players["now_cost"] <= (my_team_cost + budget)) &
-                (best_players["form"] > player.form) &
+                (best_players["form"] > float(player.form)) &
+                (best_players["total_points"] > player.total_points) &  # Ensure replacement has more points
                 (best_players["fixture_difficulty"] < await calculate_team_fdr(team_fixtures, player.team))
             ].head(1)
 
@@ -515,7 +562,7 @@ async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_tr
                 transfers.append({
                     "transfer_out": f"{player.first_name} {player.second_name}",
                     "transfer_in": replacement.iloc[0]["full_name"],
-                    "cost": replacement.iloc[0]["now_cost"] - (player.now_cost / 10)
+                    "cost": float(replacement.iloc[0]["now_cost"] - (player.now_cost / 10))  # Convert to float
                 })
 
         return transfers[:free_transfers]  # Limit to the number of free transfers
@@ -535,6 +582,7 @@ async def track_injuries(fpl, user_team):
                     "status": player_data.status
                 })
 
+        logger.debug(f"Injured players: {injured_players}")
         return injured_players
     except Exception as e:
         logger.error(f"❌ Error tracking injuries: {e}")
@@ -553,7 +601,12 @@ async def predict_points(fpl, player, team_fixtures):
 async def track_team_value(fpl, user_team):
     """Track your team's value and suggest ways to increase it through transfers."""
     try:
-        team_value = sum(player.now_cost / 10 for player in user_team)
+        team_value = 0.0
+        for player in user_team:
+            player_id = player["element"]
+            player_data = await fpl.get_player(player_id)  # Fetch player data from FPL API
+            team_value += player_data.now_cost / 10  # Add player's cost to team value
+
         return f"Your team's current value is {team_value:.1f} million."
     except Exception as e:
         logger.error(f"❌ Error tracking team value: {e}")
@@ -582,6 +635,7 @@ async def main():
 
             user = await fpl.get_user(TEAM_ID)
             user_team = await user.get_team()
+            logger.debug(f"User team structure: {user_team}")
 
             team_fixtures = await get_fixture_difficulties(fpl)
 
