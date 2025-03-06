@@ -474,7 +474,7 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         for player in players:
             data = await fetch_player_data(fpl, player, team_fixtures)
             if data:
-                data["team_fdr"] = team_fdr.get(player["team"], 25)
+                data["team_fdr"] = team_fdr.get(player.team, 25)
                 player_data.append(data)
 
         df = pd.DataFrame(player_data)
