@@ -454,15 +454,27 @@ async def send_email(subject, body):
         raise
 
 async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
-    """Suggest the best Free Hit team within budget, following FPL rules."""
+    """Suggest the best Free Hit team within budget, prioritizing teams with the easiest fixtures."""
     try:
         players = await fpl.get_players()
         player_data = []
 
-        # Gather data on all players
+        # Calculate total fixture difficulty per team
+        team_fdr = {}
+        for team_id, fixtures in team_fixtures.items():
+            fdr_sum = sum(
+                fixtures.get(gw, 5) for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD)
+            )
+            team_fdr[team_id] = fdr_sum
+
+        # Sort teams by easiest fixtures
+        easiest_teams = sorted(team_fdr, key=team_fdr.get)
+
+        # Collect player data and annotate with team FDR
         for player in players:
             data = await fetch_player_data(fpl, player, team_fixtures)
             if data:
+                data["team_fdr"] = team_fdr.get(player["team"], 25)
                 player_data.append(data)
 
         df = pd.DataFrame(player_data)
@@ -476,10 +488,14 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         df["form"] = pd.to_numeric(df["form"], errors="coerce")
         df["total_points"] = pd.to_numeric(df["total_points"], errors="coerce")
         df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
-        df = df.dropna(subset=["now_cost", "form", "total_points", "fixture_difficulty"])
+        df["team_fdr"] = pd.to_numeric(df["team_fdr"], errors="coerce")
+        df = df.dropna(subset=["now_cost", "form", "total_points", "fixture_difficulty", "team_fdr"])
 
-        # Sort players: prioritize high form, high points, and easier fixtures
-        df = df.sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True])
+        # Sort players: prioritize easiest teams, form, total points, and fixture difficulty
+        df = df.sort_values(
+            by=["team_fdr", "form", "total_points", "fixture_difficulty"],
+            ascending=[True, False, False, True]
+        )
 
         # Build balanced squad
         squad = []
@@ -517,6 +533,7 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
     except Exception as e:
         logger.error(f"❌ Error suggesting Free Hit team: {e}")
         raise
+
 
 
 async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
