@@ -454,11 +454,12 @@ async def send_email(subject, body):
         raise
 
 async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
-    """Suggest the best team to pick when using the Free Hit chip, considering budget and fixtures."""
+    """Suggest the best Free Hit team within budget, following FPL rules."""
     try:
         players = await fpl.get_players()
         player_data = []
 
+        # Gather data on all players
         for player in players:
             data = await fetch_player_data(fpl, player, team_fixtures)
             if data:
@@ -466,28 +467,60 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
 
         df = pd.DataFrame(player_data)
 
-        # Filter players by position and sort by form, points, and FDR
-        gk = df[df["position"] == "Goalkeeper"].sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True]).head(2)
-        defs = df[df["position"] == "Defender"].sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True]).head(5)
-        mids = df[df["position"] == "Midfielder"].sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True]).head(5)
-        fwds = df[df["position"] == "Forward"].sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True]).head(3)
+        if df.empty:
+            logger.warning("⚠️ No valid players found for Free Hit team.")
+            return df
 
-        # Combine the best players
-        best_team = pd.concat([gk, defs, mids, fwds])
+        # Ensure numeric types
+        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
+        df["form"] = pd.to_numeric(df["form"], errors="coerce")
+        df["total_points"] = pd.to_numeric(df["total_points"], errors="coerce")
+        df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
+        df = df.dropna(subset=["now_cost", "form", "total_points", "fixture_difficulty"])
 
-        # Ensure the team is within budget
-        while best_team["now_cost"].sum() > budget:
-            # Remove the player with the lowest form or points
-            worst_player = best_team.sort_values(by=["form", "total_points"]).head(1)
-            best_team = best_team.drop(worst_player.index)
+        # Sort players: prioritize high form, high points, and easier fixtures
+        df = df.sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True])
 
-        return best_team
+        # Build balanced squad
+        squad = []
+        positions = {
+            "Goalkeeper": 2,
+            "Defender": 5,
+            "Midfielder": 5,
+            "Forward": 3
+        }
+        team_count = {}
+
+        for position, count_needed in positions.items():
+            position_players = df[df["position"] == position]
+
+            for _, player in position_players.iterrows():
+                if count_needed == 0:
+                    break
+                if player["now_cost"] + sum(p["now_cost"] for p in squad) > budget:
+                    continue
+                if team_count.get(player["team"], 0) >= 3:
+                    continue
+                squad.append(player)
+                team_count[player["team"]] = team_count.get(player["team"], 0) + 1
+                count_needed -= 1
+
+        squad_df = pd.DataFrame(squad)
+
+        if squad_df.empty:
+            logger.warning("⚠️ No valid Free Hit squad could be formed within budget.")
+        else:
+            logger.info(f"✅ Free Hit squad selected with total cost £{squad_df['now_cost'].sum()}m")
+
+        return squad_df
+
     except Exception as e:
         logger.error(f"❌ Error suggesting Free Hit team: {e}")
         raise
 
+
 async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
-    """Suggest the best team for an upcoming Double Gameweek, considering budget and actual DGWs."""
+    """Suggest a balanced Double Gameweek team within budget, considering FPL rules."""
     try:
         players = await fpl.get_players()
         player_data = []
@@ -504,6 +537,7 @@ async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
             logger.warning("⚠️ No Double Gameweek teams found.")
             return pd.DataFrame()
 
+        # Collect player data from DGW teams
         for player in players:
             if player.team in dgw_teams:
                 data = await fetch_player_data(fpl, player, team_fixtures)
@@ -516,14 +550,47 @@ async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
             logger.warning("⚠️ No valid DGW players found.")
             return df
 
+        # Ensure numeric types for safety
+        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
+        df["form"] = pd.to_numeric(df["form"], errors="coerce")
+        df["total_points"] = pd.to_numeric(df["total_points"], errors="coerce")
+        df = df.dropna(subset=["now_cost", "form", "total_points"])
+
+        # Sort by form and total points
         df = df.sort_values(by=["form", "total_points"], ascending=[False, False])
 
-        # Ensure the team is within budget
-        while df["now_cost"].sum() > budget and not df.empty:
-            worst_player = df.sort_values(by=["form", "total_points"]).head(1)
-            df = df.drop(worst_player.index)
+        # Build the squad
+        squad = []
+        positions = {
+            "Goalkeeper": 2,
+            "Defender": 5,
+            "Midfielder": 5,
+            "Forward": 3
+        }
+        team_count = {}
 
-        return df
+        for position, count_needed in positions.items():
+            position_players = df[df["position"] == position]
+
+            for _, player in position_players.iterrows():
+                if count_needed == 0:
+                    break
+                if player["now_cost"] + sum(p["now_cost"] for p in squad) > budget:
+                    continue
+                if team_count.get(player["team"], 0) >= 3:
+                    continue
+                squad.append(player)
+                team_count[player["team"]] = team_count.get(player["team"], 0) + 1
+                count_needed -= 1
+
+        squad_df = pd.DataFrame(squad)
+
+        if squad_df.empty:
+            logger.warning("⚠️ No valid DGW squad could be formed within budget.")
+        else:
+            logger.info(f"✅ DGW squad selected with total cost £{squad_df['now_cost'].sum()}m")
+
+        return squad_df
 
     except Exception as e:
         logger.error(f"❌ Error suggesting DGW team: {e}")
