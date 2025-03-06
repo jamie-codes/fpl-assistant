@@ -1,5 +1,5 @@
-Author: Jamie McKee
 
+Author: Jamie McKee
 
 # ⚽ Fantasy Premier League (FPL) Assistant
 
@@ -9,7 +9,9 @@ This Python script helps you manage your Fantasy Premier League (FPL) team by:
 - 📅 Evaluating upcoming fixture difficulty (FDR).
 - 🧠 Suggesting the best players to pick for upcoming gameweeks.
 - 🔄 Identifying weak players in your current squad to transfer out.
-- 📁 Exporting the recommendations to CSV and Excel files.
+- 🌟 Suggesting optimal gameweeks for chips (Bench Boost, Triple Captain, Free Hit, Wildcard).
+- 📧 Sending personalized email reports with styled HTML tables.
+- 📁 Exporting recommendations to CSV and Excel files.
 
 ---
 
@@ -19,7 +21,10 @@ This Python script helps you manage your Fantasy Premier League (FPL) team by:
 ✅ Analyze player form, points, and fixture difficulty (next 5 matches).  
 ✅ Suggest the best players to bring in.  
 ✅ Suggest underperforming or risky players to transfer out.  
-✅ Export all suggestions to CSV and Excel for easy viewing.
+✅ Chip usage recommendations (Bench Boost, Triple Captain, Free Hit, Wildcard).  
+✅ Styled HTML email notifications with detailed weekly reports.  
+✅ Automatic export of suggestions to CSV and Excel files.  
+✅ Organized logs and outputs into `/logs` and `/output` folders.
 
 ---
 
@@ -29,10 +34,11 @@ This Python script helps you manage your Fantasy Premier League (FPL) team by:
   - `fpl`
   - `aiohttp`
   - `pandas`
+  - `python-dotenv`
 
 Install dependencies with:
 ```bash
-pip install fpl aiohttp pandas
+pip install fpl aiohttp pandas python-dotenv
 ```
 
 ---
@@ -54,29 +60,43 @@ pip install fpl aiohttp pandas
    }
    ```
 
-The script will automatically load this `cookies.json` file for authentication.
+---
+
+## ✉️ Setup Email Notifications
+
+1. Create a `.env` file in the same directory as the script:
+   ```bash
+   EMAIL_PASSWORD=your_gmail_app_password
+   ```
+
+2. Update the `EMAIL_CONFIG` dictionary in the script with your sender and receiver email addresses.
+
+> ⚠️ You must use an [App Password](https://support.google.com/mail/answer/185833?hl=en-GB) if using Gmail with 2FA enabled. This is different to your email password.
 
 ---
 
 ## 🔧 How to Use
 
 1. **Clone or download the script.**
-2. **Ensure your `cookies.json` file is set with your cookies.**
+2. **Ensure your `cookies.json` and `.env` files are set up.**
 3. **Run the script:**
    ```bash
    python fpl_assistant.py
    ```
 
 4. The script will:
-   - Authenticate using your full FPL session cookies.
-   - Retrieve your current team (using your FPL Team ID).
+   - Authenticate using your FPL session cookies.
+   - Retrieve your current team.
    - Analyze players and fixtures.
-   - Print suggestions directly in the terminal.
-   - Export CSV and Excel files with full suggestions.
+   - Suggest transfers, chip usage, and captaincy.
+   - Export CSV and Excel files to `/output`.
+   - Save logs to `/logs`.
+   - Email you a full weekly report.
 
 ---
 
 ## 🏷 Files Generated
+All files are stored in the `output/` directory:
 - `best_players_<timestamp>.csv`  
   Top player recommendations based on form, points, and fixture difficulty.
 
@@ -86,10 +106,13 @@ The script will automatically load this `cookies.json` file for authentication.
 - `fpl_suggestions_<timestamp>.xlsx`  
   Combined Excel file with both datasets.
 
+Logs are stored in the `logs/` directory:
+- `fpl_assistant.log`
+
 ---
 
 ## ⚙️ Configuration
-Inside the script, edit these if needed:
+Inside the script, you can edit:
 ```python
 TEAM_ID = 6378398           # Your FPL Team ID
 FIXTURE_LOOKAHEAD = 5       # Number of upcoming fixtures to consider
@@ -98,18 +121,21 @@ FIXTURE_LOOKAHEAD = 5       # Number of upcoming fixtures to consider
 ---
 
 ## 🌟 Future Ideas
-- Captaincy recommendations.
-- Price change alerts.
-- Squad optimization based on available budget.
-- Visual charts of fixture difficulty.
-- Weekly email notifications with personalized suggestions.
+- Advanced squad optimization based on budget and formation.
+- Value for Money ranking (VFM) to help identify high-scoring low-cost gems that maximize budget efficiency.
+- Perfect Free Hit Squad Selector (within budget)
+- Double Gameweek (DGW) & Blank Gameweek (BGW) Planner
+- Injury & Rotation Risk Filter
+- Visual charts of fixture difficulty and player trends.
+- More detailed email reports with graphs and player insights.
+- Automated backtesting of transfer strategies.
 
 ---
 
 ## ⚠️ Important Notes
-- Your cookies are only used during the session and are not stored elsewhere.
-- Make sure your cookies are current and not expired.
-- Use responsibly and avoid excessive requests to the FPL servers.
+- Ensure your cookies are current and not expired.
+- Avoid excessive requests to the FPL servers.
+- Email credentials are securely loaded from environment variables.
 
 ---
 
