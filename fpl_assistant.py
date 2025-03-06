@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
 LOG_FILE = "fpl_assistant.log"
-CURRENT_GAMEWEEK = 28  # Update this to the current gameweek
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -65,6 +65,23 @@ def load_cookies():
         raise
     except json.JSONDecodeError:
         logger.error("❌ cookies.json is not a valid JSON file.")
+        raise
+
+CURRENT_GAMEWEEK = None
+async def get_current_gameweek(fpl):
+    """Fetch the current active gameweek from the FPL API."""
+    try:
+        gameweeks = await fpl.get_gameweeks()
+        for gw in gameweeks:
+            if gw.is_current:
+                logger.info(f"✅ Current Gameweek detected: {gw.id}")
+                gw.id += 1
+                logger.info(f"📅 Using Gameweek: {gw.id} for suggestions going forward.")
+                return gw.id
+        logger.warning("⚠️ No active gameweek found. Defaulting to 1.")
+        return 1  # Fallback if no current gameweek is active
+    except Exception as e:
+        logger.error(f"❌ Error fetching current gameweek: {e}")
         raise
 
 
@@ -354,6 +371,8 @@ async def main():
 
         async with aiohttp.ClientSession(cookies=cookies) as session:
             fpl = FPL(session)
+            global CURRENT_GAMEWEEK
+            CURRENT_GAMEWEEK = await get_current_gameweek(fpl)
             logger.info("✅ Logged in using full browser cookies!")
 
             user = await fpl.get_user(TEAM_ID)
