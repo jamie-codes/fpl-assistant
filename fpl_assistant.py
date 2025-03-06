@@ -33,8 +33,8 @@ EMAIL_CONFIG = {
 }
 
 # Logging
-OUTPUT_DIR = "output"
-LOG_DIR = "logs"
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 LOG_FILE = f"{LOG_DIR}/fpl_assistant.log"
 # Ensure directories exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -323,6 +323,7 @@ async def export_dataframes(best_players, transfers_out):
     except Exception as e:
         logger.error(f"❌ Error exporting dataframes: {e}")
         raise
+
 
 async def send_email(subject, body):
     """Send an email with the given subject and body (HTML formatted)."""
