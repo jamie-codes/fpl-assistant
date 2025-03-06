@@ -271,7 +271,7 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
         logger.error(f"❌ Error suggesting Triple Captain: {e}")
         raise
 
-
+# Simple logic here, could be improved by comparing current team selection (injuries etc.)
 async def suggest_wildcard():
     """Suggest when to play the Wildcard chip."""
     if CURRENT_GAMEWEEK <= 20:
@@ -402,31 +402,69 @@ async def main():
             # Create the email body with HTML formatting
             email_body = f"""
             <html>
-                <body>
-                    <h2>🔼 Best Players to Pick</h2>
-                    {best_players_html}
-                    <br>
-                    <h2>🔽 Suggested Transfers Out</h2>
-                    {transfers_out_html}
-                    <br>
-                    <h2>🎖 Captaincy Recommendations</h2>
-                    <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
-                    <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
-                    <br>
-                    <h2>🌟 Bench Boost Suggestion</h2>
-                    <p>{bench_boost_suggestion}</p>
-                    <br>
-                    <h2>🌟 Triple Captain Suggestion</h2>
-                    <p>{triple_captain_suggestion}</p>
-                    <br>
-                    <h2>🃏 Wildcard Suggestion</h2>
-                    <p>{wildcard_suggestion}</p>
-                    <br>
-                    <h2>🎯 Free Hit Suggestion</h2>
-                    <p>{free_hit_suggestion}</p>
-                </body>
+            <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    background-color: #f9f9f9;
+                    padding: 20px;
+                    color: #333333;
+                }}
+                h2 {{
+                    background-color: #0044cc;
+                    color: #ffffff;
+                    padding: 10px;
+                    border-radius: 5px;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                }}
+                th {{
+                    background-color: #007bff;
+                    color: #ffffff;
+                    padding: 10px;
+                }}
+                td {{
+                    padding: 8px;
+                    text-align: center;
+                    border: 1px solid #dddddd;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f2f2f2;
+                }}
+                tr:hover {{
+                    background-color: #e6f7ff;
+                }}
+                p {{
+                    padding: 10px;
+                    background-color: #eef2f7;
+                    border-left: 4px solid #0044cc;
+                    border-radius: 3px;
+                }}
+            </style>
+            </head>
+            <body>
+                <h2>🔼 Best Players to Pick</h2>
+                {best_players_html}
+                <h2>🔽 Suggested Transfers Out</h2>
+                {transfers_out_html}
+                <h2>🎖 Captaincy Recommendations</h2>
+                <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
+                <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
+                <h2>🌟 Bench Boost Suggestion</h2>
+                <p>{bench_boost_suggestion}</p>
+                <h2>🌟 Triple Captain Suggestion</h2>
+                <p>{triple_captain_suggestion}</p>
+                <h2>🃏 Wildcard Suggestion</h2>
+                <p>{wildcard_suggestion}</p>
+                <h2>🎯 Free Hit Suggestion</h2>
+                <p>{free_hit_suggestion}</p>
+            </body>
             </html>
             """
+
 
             # Send email with suggestions
             await send_email("Your Weekly FPL Suggestions", email_body)
