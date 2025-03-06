@@ -535,6 +535,67 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         raise
 
 
+async def suggest_starting_xi(my_players, team_fixtures):
+    """Suggest the optimal starting XI from your current squad with dynamic formation."""
+    try:
+        player_data = []
+        for player in my_players:
+            data = await fetch_player_data(fpl, player, team_fixtures)
+            if data:
+                player_data.append(data)
+
+        df = pd.DataFrame(player_data)
+
+        if df.empty:
+            logger.warning("⚠️ No valid player data found for your team.")
+            return None, None, None, None
+
+        df["form"] = pd.to_numeric(df["form"], errors="coerce")
+        df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
+        df = df.dropna(subset=["form", "fixture_difficulty"])
+
+        goalkeepers = df[df["position"] == "Goalkeeper"].sort_values(by=["form", "fixture_difficulty"], ascending=[False, True])
+        defenders = df[df["position"] == "Defender"].sort_values(by=["form", "fixture_difficulty"], ascending=[False, True])
+        midfielders = df[df["position"] == "Midfielder"].sort_values(by=["form", "fixture_difficulty"], ascending=[False, True])
+        forwards = df[df["position"] == "Forward"].sort_values(by=["form", "fixture_difficulty"], ascending=[False, True])
+
+        formations = [
+            (3, 4, 3),
+            (3, 5, 2),
+            (4, 4, 2),
+            (4, 3, 3),
+            (5, 3, 2)
+        ]
+
+        best_xi, best_score, best_formation = None, 0, None
+
+        for def_count, mid_count, fwd_count in formations:
+            if len(defenders) >= def_count and len(midfielders) >= mid_count and len(forwards) >= fwd_count:
+                xi = pd.concat([
+                    goalkeepers.head(1),
+                    defenders.head(def_count),
+                    midfielders.head(mid_count),
+                    forwards.head(fwd_count)
+                ])
+                score = xi["form"].sum()
+                if score > best_score:
+                    best_xi, best_score, best_formation = xi, score, (def_count, mid_count, fwd_count)
+
+        bench = df[~df.index.isin(best_xi.index)].sort_values(by=["form", "fixture_difficulty"], ascending=[False, True])
+
+        captain = best_xi.sort_values(by="form", ascending=False).iloc[0]
+        vice_captain = best_xi.sort_values(by="form", ascending=False).iloc[1]
+
+        logger.info(f"✅ Best formation: {best_formation[0]}-{best_formation[1]}-{best_formation[2]}")
+        logger.info(f"✅ Captain: {captain['full_name']}")
+        logger.info(f"✅ Vice-Captain: {vice_captain['full_name']}")
+
+        return best_xi, bench, captain, vice_captain
+
+    except Exception as e:
+        logger.error(f"❌ Error suggesting starting XI: {e}")
+        raise
+
 
 async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
     """Suggest a balanced Double Gameweek team within budget, considering FPL rules."""
@@ -706,6 +767,8 @@ async def track_team_value(fpl, user_team):
     except Exception as e:
         logger.error(f"❌ Error tracking team value: {e}")
         raise
+
+
 
 async def analyze_historical_performance(fpl, player_id):
     """Analyze historical performance data for a player."""

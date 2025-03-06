@@ -3,6 +3,9 @@ Author: Jamie McKee
 
 # ⚽ Fantasy Premier League (FPL) Assistant
 
+![FPL Assistant](https://github.com/user-attachments/assets/c260cb9d-b2fa-4526-a74b-2a38132a1127)
+
+
 This Python script helps you manage your Fantasy Premier League (FPL) team by:
 - 🔍 Authenticating with your full FPL browser session cookies.
 - 📊 Analyzing global player data.
