@@ -32,6 +32,14 @@ EMAIL_CONFIG = {
     "receiver_email": "user.invalid@gmail.com"
 }
 
+# Logging
+OUTPUT_DIR = "output"
+LOG_DIR = "logs"
+LOG_FILE = f"{LOG_DIR}/fpl_assistant.log"
+# Ensure directories exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
 # Set up logging with UTF-8 encoding
 logging.basicConfig(
     level=logging.DEBUG,  # Enable DEBUG level logging
@@ -42,6 +50,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 
 def load_cookies():
@@ -60,20 +69,20 @@ def load_cookies():
 
 
 async def get_fixture_difficulties(fpl):
-    """Fetch fixture difficulties for all teams."""
     try:
         fixtures = await fpl.get_fixtures()
         team_fixtures = {}
         for fixture in fixtures:
             if fixture.finished or fixture.event is None:
                 continue
+            gw = fixture.event
             for team_id, difficulty in [
                 (fixture.team_h, fixture.team_h_difficulty),
                 (fixture.team_a, fixture.team_a_difficulty)
             ]:
                 if team_id not in team_fixtures:
-                    team_fixtures[team_id] = []
-                team_fixtures[team_id].append(difficulty)
+                    team_fixtures[team_id] = {}
+                team_fixtures[team_id][gw] = difficulty
         return team_fixtures
     except Exception as e:
         logger.error(f"❌ Error fetching fixture difficulties: {e}")
@@ -81,13 +90,18 @@ async def get_fixture_difficulties(fpl):
 
 
 async def calculate_team_fdr(team_fixtures, team_id):
-    """Calculate the total fixture difficulty rating (FDR) for a team, ensuring valid FDR values (1-5)."""
-    fixtures = team_fixtures.get(team_id, [])
+    """Calculate the total fixture difficulty rating (FDR) for a team over the next few gameweeks."""
+    fixtures = team_fixtures.get(team_id, {})
     
-    # Ensure FDR values are within the valid range (1-5)
-    valid_fixtures = [min(max(fdr, 1), 5) for fdr in fixtures[:FIXTURE_LOOKAHEAD]]
+    # Get the FDRs for the next FIXTURE_LOOKAHEAD gameweeks
+    upcoming_fdrs = []
+    for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
+        fdr = fixtures.get(gw, 5)  # Default to 5 if no fixture data
+        capped_fdr = max(1, min(fdr, 5))
+        upcoming_fdrs.append(capped_fdr)
     
-    return sum(valid_fixtures)
+    return sum(upcoming_fdrs)
+
 
 async def fetch_player_data(fpl, player, team_fixtures):
     """Fetch and format player data."""
@@ -184,39 +198,32 @@ async def suggest_transfers_out(fpl, team_fixtures, user_team):
 
 
 async def suggest_bench_boost(fpl, team_fixtures, user_team):
-    """Suggest the best gameweek to use the Bench Boost chip based on future fixtures."""
     try:
         bench_players = []
-        bench_scores = []
 
-        # Identify bench players based on their position in the user's team
         for player in user_team:
-            if player["position"] >= 12:  # Bench players have position 12, 13, 14, or 15
+            if player["position"] >= 12:
                 player_data = await fpl.get_player(player["element"])
                 bench_players.append(player_data)
 
-        if not bench_players:  # No bench players found
+        if not bench_players:
             logger.warning("⚠️ No bench players found for Bench Boost suggestion.")
             return None
 
-        # Log bench players for debugging
         logger.debug("Bench Players:")
         for player in bench_players:
             logger.debug(f"- {player.first_name} {player.second_name} (Team: {player.team}, Form: {player.form})")
 
-        # Calculate bench scores for bench players across future gameweeks
         best_gw = CURRENT_GAMEWEEK
         best_bench_score = 0
 
         for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
             total_bench_score = 0
-
             for player in bench_players:
-                fdr = await calculate_team_fdr(team_fixtures, player.team)
-                bench_score = (float(player.form) * 0.5) + ((6 - fdr) * 0.5)
+                fdr = team_fixtures.get(player.team, {}).get(gw, default_fixture_value)
+                capped_fdr = max(1, min(fdr, 5))
+                bench_score = max(0, (float(player.form) * 0.6) + ((5 - capped_fdr) * 0.4))
                 total_bench_score += bench_score
-
-                # Log player's FDR and bench score for debugging
                 logger.debug(f"Gameweek {gw} - {player.first_name} {player.second_name}: Form = {player.form}, FDR = {fdr}, Bench Score = {bench_score}")
 
             logger.debug(f"Gameweek {gw} - Total Bench Score: {total_bench_score}")
@@ -230,47 +237,32 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
         logger.error(f"❌ Error suggesting Bench Boost: {e}")
         raise
 
+
+default_fixture_value = 5
 async def suggest_triple_captain(fpl, team_fixtures, user_team):
-    """Suggest the best gameweek to use the Triple Captain chip based on CURRENT_GAMEWEEK."""
     try:
         captain, _ = await suggest_captain(fpl, team_fixtures, user_team)
-        
-        # Extract the team ID from the captain DataFrame
-        captain_team_id = captain.iloc[0]["team"]  # Access the first row and the "team" column
-        
-        # Log the captain's team ID for debugging
+        captain_team_id = captain.iloc[0]["team"]
         logger.debug(f"Captain's team ID: {captain_team_id}")
-        
-        # Log all team IDs in team_fixtures for debugging
-        logger.debug(f"Team IDs in team_fixtures: {list(team_fixtures.keys())}")
-        
-        # Get the captain's fixture difficulty for the current and upcoming gameweeks
-        captain_fixtures = team_fixtures.get(captain_team_id, [])
-        
-        # Log the captain's fixtures for debugging
-        logger.debug(f"Captain's fixtures: {captain_fixtures}")
-        
-        if not captain_fixtures:
+        fixtures = team_fixtures.get(captain_team_id, {})
+
+        if not fixtures:
             logger.warning(f"No fixture data found for team ID {captain_team_id}.")
             return "No fixture data found for the captain's team. Save Triple Captain for a future gameweek."
 
-        # Find the gameweek with the easiest fixture for the captain
-        best_gw = CURRENT_GAMEWEEK  # Start with the current gameweek
-        easiest_fdr = float("inf")  # Initialize with a high value
+        best_gw = CURRENT_GAMEWEEK
+        easiest_fdr = float("inf")
         valid_fixtures_found = False
 
         for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
-            if gw - 1 < len(captain_fixtures):  # Ensure we don't go out of bounds
-                fdr = captain_fixtures[gw - 1]  # Fixture difficulty for the gameweek
-                logger.debug(f"Gameweek {gw} - FDR: {fdr}")
-                if fdr < easiest_fdr:
-                    easiest_fdr = fdr
-                    best_gw = gw
-                    valid_fixtures_found = True
-            else:
-                logger.debug(f"No fixture data for Gameweek {gw}.")
+            fdr = fixtures.get(gw, default_fixture_value)
+            logger.debug(f"Gameweek {gw} - FDR: {fdr}")
+            if fdr < easiest_fdr:
+                easiest_fdr = fdr
+                best_gw = gw
+                valid_fixtures_found = True
 
-        if not valid_fixtures_found:  # No valid fixture difficulties found
+        if not valid_fixtures_found:
             logger.warning("No valid fixture difficulties found for the captain. Save Triple Captain for a future gameweek.")
             return "No valid fixture difficulties found for the captain. Save Triple Captain for a future gameweek."
 
@@ -278,6 +270,7 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
     except Exception as e:
         logger.error(f"❌ Error suggesting Triple Captain: {e}")
         raise
+
 
 async def suggest_wildcard():
     """Suggest when to play the Wildcard chip."""
@@ -317,13 +310,12 @@ async def suggest_free_hit(fpl):
 
 
 async def export_dataframes(best_players, transfers_out):
-    """Export dataframes to CSV and Excel files."""
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-        best_players.to_csv(f'best_players_{timestamp}.csv', index=False)
-        transfers_out.to_csv(f'transfers_out_{timestamp}.csv', index=False)
+        best_players.to_csv(f'{OUTPUT_DIR}/best_players_{timestamp}.csv', index=False)
+        transfers_out.to_csv(f'{OUTPUT_DIR}/transfers_out_{timestamp}.csv', index=False)
 
-        with pd.ExcelWriter(f'fpl_suggestions_{timestamp}.xlsx') as writer:
+        with pd.ExcelWriter(f'{OUTPUT_DIR}/fpl_suggestions_{timestamp}.xlsx') as writer:
             best_players.to_excel(writer, sheet_name='Best Players', index=False)
             transfers_out.to_excel(writer, sheet_name='Transfers Out', index=False)
 
@@ -331,7 +323,6 @@ async def export_dataframes(best_players, transfers_out):
     except Exception as e:
         logger.error(f"❌ Error exporting dataframes: {e}")
         raise
-
 
 async def send_email(subject, body):
     """Send an email with the given subject and body (HTML formatted)."""
