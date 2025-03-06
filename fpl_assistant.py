@@ -487,37 +487,48 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         raise
 
 async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
-    """Suggest the best team to pick for a Double Gameweek, considering budget and fixtures."""
+    """Suggest the best team for an upcoming Double Gameweek, considering budget and actual DGWs."""
     try:
         players = await fpl.get_players()
         player_data = []
 
+        # Identify teams with double fixtures
+        dgw_teams = []
+        for team_id, fixtures in team_fixtures.items():
+            upcoming_gws = [gw for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD)]
+            gw_count = sum(1 for gw in upcoming_gws if gw in fixtures)
+            if gw_count >= 2:
+                dgw_teams.append(team_id)
+
+        if not dgw_teams:
+            logger.warning("⚠️ No Double Gameweek teams found.")
+            return pd.DataFrame()
+
         for player in players:
-            data = await fetch_player_data(fpl, player, team_fixtures)
-            if data:
-                player_data.append(data)
+            if player.team in dgw_teams:
+                data = await fetch_player_data(fpl, player, team_fixtures)
+                if data:
+                    player_data.append(data)
 
         df = pd.DataFrame(player_data)
 
-        # Identify players with two fixtures in the same gameweek
-        # Adjust the criteria to be less strict
-        dgw_players = df[df["fixture_difficulty"] <= 4]  # Changed from 3 to 4
-        dgw_players = dgw_players.sort_values(by=["form", "total_points"], ascending=[False, False])
+        if df.empty:
+            logger.warning("⚠️ No valid DGW players found.")
+            return df
 
-        # Log the players being considered
-        logger.debug("Players considered for DGW team:")
-        logger.debug(dgw_players)
+        df = df.sort_values(by=["form", "total_points"], ascending=[False, False])
 
         # Ensure the team is within budget
-        while dgw_players["now_cost"].sum() > budget:
-            # Remove the player with the lowest form or points
-            worst_player = dgw_players.sort_values(by=["form", "total_points"]).head(1)
-            dgw_players = dgw_players.drop(worst_player.index)
+        while df["now_cost"].sum() > budget and not df.empty:
+            worst_player = df.sort_values(by=["form", "total_points"]).head(1)
+            df = df.drop(worst_player.index)
 
-        return dgw_players
+        return df
+
     except Exception as e:
         logger.error(f"❌ Error suggesting DGW team: {e}")
         raise
+
 
 async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_transfers=1):
     """Suggest the best transfers for the upcoming gameweeks, considering budget and free transfers."""
