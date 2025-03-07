@@ -471,6 +471,10 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         # Sort teams by easiest fixtures
         easiest_teams = sorted(team_fdr, key=team_fdr.get)
 
+        # Log fixture difficulties for debugging
+        logger.debug(f"Fixture Difficulties by Team: {team_fdr}")
+        logger.debug(f"Easiest Teams: {easiest_teams}")
+
         # Collect player data and annotate with team FDR
         for player in players:
             data = await fetch_player_data(fpl, player, team_fixtures)
@@ -536,7 +540,7 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         raise
 
 
-async def suggest_starting_xi(my_players, team_fixtures):
+async def suggest_starting_xi(fpl, my_players, team_fixtures):
     """Suggest the optimal starting XI from your current squad with dynamic formation."""
     try:
         player_data = []
@@ -582,6 +586,10 @@ async def suggest_starting_xi(my_players, team_fixtures):
                 if score > best_score:
                     best_xi, best_score, best_formation = xi, score, (def_count, mid_count, fwd_count)
 
+        if best_xi is None:
+            logger.warning("⚠️ No valid starting XI could be formed. Check player data and formations.")
+            return None, None, None, None
+
         bench = df[~df.index.isin(best_xi.index)].sort_values(by=["form", "fixture_difficulty"], ascending=[False, True])
 
         captain = best_xi.sort_values(by="form", ascending=False).iloc[0]
@@ -596,7 +604,6 @@ async def suggest_starting_xi(my_players, team_fixtures):
     except Exception as e:
         logger.error(f"❌ Error suggesting starting XI: {e}")
         raise
-
 
 async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
     """Suggest a balanced Double Gameweek team within budget, considering FPL rules."""
@@ -615,6 +622,9 @@ async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
         if not dgw_teams:
             logger.warning("⚠️ No Double Gameweek teams found.")
             return pd.DataFrame()
+
+        # Log DGW teams for debugging
+        logger.debug(f"Double Gameweek Teams: {dgw_teams}")
 
         # Collect player data from DGW teams
         for player in players:
@@ -674,7 +684,6 @@ async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
     except Exception as e:
         logger.error(f"❌ Error suggesting DGW team: {e}")
         raise
-
 
 async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_transfers=1):
     """Suggest the best transfers for the upcoming gameweeks, considering budget and free transfers."""
@@ -848,31 +857,6 @@ def build_html_table(players):
     """
     return table
 
-async def send_email(html_content):
-    import smtplib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
-
-    sender_email = "you@example.com"
-    receiver_email = "you@example.com"
-    password = "your_email_password"
-
-    message = MIMEMultipart("alternative")
-    message["Subject"] = "📊 FPL Weekly Update"
-    message["From"] = sender_email
-    message["To"] = receiver_email
-
-    part = MIMEText(html_content, "html")
-    message.attach(part)
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender_email, password)
-            server.sendmail(sender_email, receiver_email, message.as_string())
-        logger.info("✅ Email sent successfully.")
-    except Exception as e:
-        logger.error(f"❌ Failed to send email: {e}")
-
 
 async def main():
     """Main function to run the FPL assistant."""
@@ -891,6 +875,18 @@ async def main():
 
             players = await fpl.get_players()
             team_fixtures = await get_fixture_difficulties(fpl)
+
+            # Fetch the user's current players
+            my_players = [await fpl.get_player(p["element"]) for p in user_team]
+
+            # Suggest the optimal starting XI and bench
+            logger.info("\n🌟 Suggesting Optimal Starting XI and Bench:")
+            starting_xi, bench, captain, vice_captain = await suggest_starting_xi(fpl, my_players, team_fixtures)
+            if starting_xi is not None:
+                logger.info("Starting XI:\n%s", starting_xi)
+                logger.info("Bench:\n%s", bench)
+            else:
+                logger.warning("⚠️ No valid starting XI or bench data found.")
 
             logger.info("\n🔼 Best Players to Pick:")
             best_players = await suggest_best_players(fpl, team_fixtures)
@@ -959,28 +955,9 @@ async def main():
             underperforming_players_html = underperforming_players.to_html(index=False) if not underperforming_players.empty else "<p>No underperforming players found.</p>"
             replacements_html = pd.DataFrame(replacements).to_html(index=False) if replacements else "<p>No suggested replacements found.</p>"
 
-            # Build full player data
-            my_players = []
-            for player in players:
-                player_data = await fetch_player_data(fpl, player, team_fixtures)
-                if player_data:
-                    my_players.append(player_data)
-
-            # Split into categories as needed
-            starting_xi = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:11]
-            bench = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[11:15]
-            best_players = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:15]
-            transfers_out = sorted(my_players, key=lambda x: (x["form"], x["total_points"]))[:5]
-            free_hit_team = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:15]
-            dgw_team = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:15]
-
-            # Build HTML tables
-            starting_xi_html = build_html_table(starting_xi) if starting_xi else "<p>No starting XI data available.</p>"
-            bench_html = build_html_table(bench) if bench else "<p>No bench data available.</p>"
-            best_players_html = build_html_table(best_players) if best_players else "<p>No best players data available.</p>"
-            transfers_out_html = build_html_table(transfers_out) if transfers_out else "<p>No transfers out data available.</p>"
-            free_hit_html = build_html_table(free_hit_team) if free_hit_team else "<p>No Free Hit team data available.</p>"
-            dgw_team_html = build_html_table(dgw_team) if dgw_team else "<p>No DGW team data available.</p>"
+            # Build HTML tables for starting XI and bench
+            starting_xi_html = starting_xi.to_html(index=False) if starting_xi is not None else "<p>No starting XI data available.</p>"
+            bench_html = bench.to_html(index=False) if bench is not None else "<p>No bench data available.</p>"
 
             # Create the email body with HTML formatting
             email_body = f"""
@@ -1029,6 +1006,10 @@ async def main():
             </style>
             </head>
             <body>
+                <h2>🌟 Starting XI</h2>
+                {starting_xi_html}
+                <h2>🌟 Bench</h2>
+                {bench_html}
                 <h2>🔼 Best Players to Pick</h2>
                 {best_players_html}
                 <h2>🔽 Suggested Transfers Out</h2>
@@ -1059,10 +1040,6 @@ async def main():
                 {underperforming_players_html}
                 <p>Suggested Replacements:</p>
                 {replacements_html}
-                <h2>🌟 Starting XI</h2>
-                {starting_xi_html}
-                <h2>🌟 Bench</h2>
-                {bench_html}
             </body>
             </html>
             """
