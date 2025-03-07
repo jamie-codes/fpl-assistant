@@ -141,7 +141,7 @@ async def fetch_player_data(fpl, player, team_fixtures):
         total_points = player.total_points if player.total_points else 0.0
 
         # Calculate Value for Money (VFM)
-        vfm = total_points / now_cost if now_cost > 0 else 0.0
+        vfm = round(total_points / now_cost, 2) if now_cost > 0 else 0.0
 
         # Fetch team logo and player photo URLs (handle missing fields)
         team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png" if player.team else "https://via.placeholder.com/30"
@@ -165,21 +165,21 @@ async def fetch_player_data(fpl, player, team_fixtures):
     
 def generate_player_row(player):
     player_photo = player.get('player_photo') or 'https://via.placeholder.com/40x50?text=Player'
-    team_logo = player.get('team_logo') or 'https://via.placeholder.com/30x30?text=Logo'
+    team_logo = player.get('team_logo') or 'https://via.placeholder.com/40x40?text=Logo'
 
     return f"""
     <tr>
-        <td>
+        <td style="text-align:left;">
             <img src="{player_photo}" 
                  alt="{player.get('full_name', 'Unknown')}" 
-                 style="width:30px; height:40px; border-radius:5px; margin-right:5px;">
+                 style="width:30px; height:40px; border-radius:5px; margin-right:8px; vertical-align:middle;">
             {player.get('full_name', 'Unknown')}
         </td>
-        <td>
+        <td style="text-align:left;">
             <img src="{team_logo}" 
                  alt="Team Logo" 
                  title="{get_team_name(player.get('team', 0))}" 
-                 style="width:20px; height:20px; border-radius:50%; margin-right:5px;">
+                 style="width:40px; height:40px; border-radius:50%; margin-right:8px; vertical-align:middle;">
             {get_team_name(player.get('team', 0))}
         </td>
         <td>{player.get('position', 'Unknown')}</td>
@@ -190,6 +190,7 @@ def generate_player_row(player):
         <td>{player.get('vfm', 'N/A')}</td>
     </tr>
     """
+
 
 def get_team_name(team_id):
     """Map team IDs to team names."""
@@ -908,6 +909,7 @@ async def track_team_value(fpl, user_team):
         logger.error(f"❌ Error tracking team value: {e}")
         raise
 
+
 async def main():
     """Main function to run the FPL assistant."""
     try:
@@ -1027,9 +1029,20 @@ async def main():
             starting_xi_html = build_html_table(starting_xi.to_dict('records')) if starting_xi is not None else "<p>No starting XI data available.</p>"
             bench_html = build_html_table(bench.to_dict('records')) if bench is not None else "<p>No bench data available.</p>"
 
-            # Create the email body with HTML formatting
+            # Run the backtester and get results
+            logger.info("\n🌟 Running Backtester for Strategy Comparison:")
+            backtest_results = await compare_strategies(fpl, range(1, CURRENT_GAMEWEEK))
+            await generate_graphs(backtest_results)
+            await export_results(backtest_results)
+
             # Create the email body with HTML formatting
             email_body = f"""
+                <h2>ℹ️ Explanation of Metrics</h2>
+                <ul>
+                <li><strong>FDR (Fixture Difficulty Rating):</strong> Measures the difficulty of upcoming fixtures. ⚠️ <em>Lower is better</em>.</li>
+                <li><strong>VFM (Value For Money):</strong> Total points per million spent. 💰 <em>Higher is better</em>. (Rounded to 2 decimal places)</li>
+                </ul>
+
                 <h2>🌟 Starting XI</h2>
                 {starting_xi_html}
                 <h2>🌟 Bench</h2>
@@ -1102,6 +1115,11 @@ async def main():
                 {underperforming_players_html}
                 <p>Suggested Replacements:</p>
                 {replacements_html}
+                <h2>🌟 Backtester Results</h2>
+                <p>Strategy Performance Comparison:</p>
+                <img src="{OUTPUT_DIR}/strategy_comparison.png" alt="Strategy Comparison Graph">
+                <p>Backtest Results:</p>
+                <a href="{OUTPUT_DIR}/backtest_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv">Download CSV</a>
             """
 
             # Send email with suggestions
