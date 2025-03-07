@@ -33,7 +33,9 @@ EMAIL_CONFIG = {
 # Logging
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-LOG_FILE = f"{LOG_DIR}/fpl_assistant.log"
+# Generate a unique log file name with a timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # Format: YYYYMMDD_HHMMSS
+LOG_FILE = f"{LOG_DIR}/fpl_assistant_{timestamp}.log"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -102,6 +104,10 @@ async def get_fixture_difficulties(fpl):
 
 async def calculate_team_fdr(team_fixtures, team_id):
     """Calculate the total fixture difficulty rating (FDR) for a team over the next few gameweeks."""
+    if not team_id or team_id not in team_fixtures:
+        logger.warning(f"⚠️ Invalid team ID or no fixture data found for team ID: {team_id}")
+        return 5 * FIXTURE_LOOKAHEAD  # Default to maximum difficulty if no data is found
+
     fixtures = team_fixtures.get(team_id, {})
     upcoming_fdrs = []
     for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
@@ -111,8 +117,12 @@ async def calculate_team_fdr(team_fixtures, team_id):
     return sum(upcoming_fdrs)
 
 async def fetch_player_data(fpl, player, team_fixtures):
-    """Fetch and format player data."""
     try:
+        # Check if player object is valid and has required attributes
+        if not player or not hasattr(player, 'team') or not hasattr(player, 'element_type'):
+            logger.warning(f"⚠️ Invalid player object or missing attributes for player: {player}")
+            return None
+
         if not player.team or not player.element_type:
             logger.warning(f"⚠️ Missing team or position data for player {player.first_name} {player.second_name}")
             return None
@@ -128,19 +138,99 @@ async def fetch_player_data(fpl, player, team_fixtures):
 
         form = float(player.form) if player.form not in [None, ""] else 0.0
         now_cost = player.now_cost / 10 if player.now_cost else 0.0
+        total_points = player.total_points if player.total_points else 0.0
+
+        # Calculate Value for Money (VFM)
+        vfm = total_points / now_cost if now_cost > 0 else 0.0
+
+        # Fetch team logo and player photo URLs (handle missing fields)
+        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png" if player.team else "https://via.placeholder.com/30"
+        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png" if hasattr(player, 'code') and player.code else "https://via.placeholder.com/50"
 
         return {
             "full_name": f"{player.first_name} {player.second_name}",
             "team": player.team,
+            "team_logo": team_logo_url,  # Add team logo URL
+            "player_photo": player_photo_url,  # Add player photo URL
             "position": position,
             "form": form,
-            "total_points": player.total_points,
+            "total_points": total_points,
             "now_cost": now_cost,
-            "fixture_difficulty": fdr
+            "fixture_difficulty": fdr,
+            "vfm": vfm
         }
     except Exception as e:
         logger.error(f"❌ Error fetching data for player {player.first_name} {player.second_name}: {e}")
         return None
+    
+def generate_player_row(player):
+    """Generate an HTML table row for a player, including team logos and player photos."""
+    return f"""
+    <tr>
+        <td><img src="{player.get('player_photo', 'https://via.placeholder.com/50')}" alt="{player.get('full_name', 'Unknown')}">
+        {player.get('full_name', 'Unknown')}</td>
+        <td><img src="{player.get('team_logo', 'https://via.placeholder.com/30')}" alt="Team Logo" title="{get_team_name(player.get('team', 0))}"></td>
+        <td>{player.get('position', 'Unknown')}</td>
+        <td>{player.get('form', 'N/A')}</td>
+        <td>{player.get('total_points', 'N/A')}</td>
+        <td>{player.get('now_cost', 'N/A')}</td>
+        <td>{player.get('fixture_difficulty', 'N/A')}</td>
+        <td>{player.get('vfm', 'N/A')}</td>
+    </tr>
+    """
+
+def get_team_name(team_id):
+    """Map team IDs to team names."""
+    team_names = {
+        1: "Arsenal",
+        2: "Aston Villa",
+        3: "Brentford",
+        4: "Brighton",
+        5: "Burnley",
+        6: "Chelsea",
+        7: "Crystal Palace",
+        8: "Everton",
+        9: "Leicester",
+        10: "Leeds",
+        11: "Liverpool",
+        12: "Man City",
+        13: "Man Utd",
+        14: "Newcastle",
+        15: "Norwich",
+        16: "Southampton",
+        17: "Spurs",
+        18: "Watford",
+        19: "West Ham",
+        20: "Wolves"
+    }
+    return team_names.get(team_id, "Unknown Team")
+
+def build_html_table(players):
+    """Build an HTML table with team logos, player photos, and hover-over tooltips."""
+    if not players:
+        return "<p>No player data available.</p>"
+
+    rows = ''.join([generate_player_row(player) for player in players])
+    table = f"""
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Team</th>
+                <th>Position</th>
+                <th>Form</th>
+                <th>Total Points</th>
+                <th>Cost</th>
+                <th>FDR</th>
+                <th>VFM</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows}
+        </tbody>
+    </table>
+    """
+    return table
 
 async def suggest_best_players(fpl, team_fixtures, top_n=10):
     """Suggest the best players to pick based on form, points, and FDR."""
@@ -169,6 +259,11 @@ async def suggest_captain(fpl, team_fixtures, user_team):
         my_players = [await fpl.get_player(p["element"]) for p in user_team]
         captain_data = []
         for player in my_players:
+            # Check if player object is valid and has required attributes
+            if not player or not hasattr(player, 'team'):
+                logger.warning(f"⚠️ Invalid player object or missing team attribute for player: {player}")
+                continue
+
             fdr = await calculate_team_fdr(team_fixtures, player.team)
             captain_score = (float(player.form) * 0.4) + (player.total_points * 0.3) + ((6 - fdr) * 0.3)
             captain_data.append({
@@ -179,6 +274,10 @@ async def suggest_captain(fpl, team_fixtures, user_team):
                 "fixture_difficulty": fdr,
                 "captain_score": captain_score
             })
+
+        if not captain_data:
+            logger.warning("⚠️ No valid captain data found.")
+            return pd.DataFrame(), pd.DataFrame()  # Return empty DataFrames
 
         df = pd.DataFrame(captain_data)
         captain = df.sort_values(by="captain_score", ascending=False).head(1)
@@ -424,7 +523,81 @@ async def send_email(subject, body):
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
 
-        msg.attach(MIMEText(body, "html"))
+        # Attach the HTML body with improved styling and gameweek title
+        email_body = f"""
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    background-color: #f9f9f9;
+                    padding: 20px;
+                    color: #333333;
+                }}
+                .email-container {{
+                    max-width: 800px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    padding: 20px;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+                }}
+                h1 {{
+                    text-align: center;
+                    color: #0044cc;
+                    margin-bottom: 20px;
+                }}
+                h2 {{
+                    background-color: #0044cc;
+                    color: #ffffff;
+                    padding: 10px;
+                    border-radius: 5px;
+                    text-align: center;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                }}
+                th, td {{
+                    padding: 10px;
+                    text-align: center;
+                    border: 1px solid #dddddd;
+                }}
+                th {{
+                    background-color: #007bff;
+                    color: #ffffff;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f2f2f2;
+                }}
+                tr:hover {{
+                    background-color: #e6f7ff;
+                }}
+                img {{
+                    vertical-align: middle;
+                }}
+                .footer {{
+                    text-align: center;
+                    margin-top: 20px;
+                    font-size: 12px;
+                    color: #777777;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="email-container">
+                <h1>FPL Assistant - Gameweek {CURRENT_GAMEWEEK}</h1>
+                {body}
+                <div class="footer">
+                    <p>This email was generated by the FPL Assistant. Please do not reply to this email.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        msg.attach(MIMEText(email_body, "html"))
 
         with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
             server.starttls()
@@ -733,7 +906,6 @@ async def main():
             global CURRENT_GAMEWEEK
             CURRENT_GAMEWEEK = await get_current_gameweek(fpl)
             logger.info("✅ Logged in using full browser cookies!")
-
             user = await fpl.get_user(TEAM_ID)
             user_team = await user.get_team()
             logger.debug(f"User team structure: {user_team}")
@@ -763,6 +935,25 @@ async def main():
 
             logger.info("\n🎖 Captaincy Recommendations:")
             captain, vice_captain = await suggest_captain(fpl, team_fixtures, user_team)
+
+            # Log the captain and vice-captain data for debugging
+            logger.info("Captain data: %s", captain)
+            logger.info("Vice-Captain data: %s", vice_captain)
+
+            if not captain.empty:
+                logger.info("Captain: %s", captain.iloc[0]['full_name'])
+            else:
+                logger.warning("⚠️ No valid captain data found.")
+
+            if not vice_captain.empty:
+                logger.info("Vice-Captain: %s", vice_captain.iloc[0]['full_name'])
+            else:
+                logger.warning("⚠️ No valid vice-captain data found.")
+
+            if not vice_captain.empty:
+                logger.info("Vice-Captain: %s", vice_captain.iloc[0]['full_name'])
+            else:
+                logger.warning("⚠️ No valid vice-captain data found.")
             logger.info("Captain: %s", captain)
             logger.info("Vice-Captain: %s", vice_captain)
 
@@ -813,65 +1004,20 @@ async def main():
             await export_dataframes(best_players, transfers_out)
 
             # Convert dataframes to HTML tables
-            best_players_html = best_players.to_html(index=False) if not best_players.empty else "<p>No data available for best players.</p>"
-            transfers_out_html = transfers_out.to_html(index=False) if not transfers_out.empty else "<p>No data available for transfers out.</p>"
-            free_hit_team_html = free_hit_team.to_html(index=False) if not free_hit_team.empty else "<p>No valid Free Hit squad could be formed within budget.</p>"
-            dgw_team_html = dgw_team.to_html(index=False) if not dgw_team.empty else "<p>No valid DGW squad could be formed within budget.</p>"
-            underperforming_players_html = underperforming_players.to_html(index=False) if not underperforming_players.empty else "<p>No underperforming players found.</p>"
-            replacements_html = pd.DataFrame(replacements).to_html(index=False) if replacements else "<p>No suggested replacements found.</p>"
+            best_players_html = build_html_table(best_players.to_dict('records')) if not best_players.empty else "<p>No data available for best players.</p>"
+            transfers_out_html = build_html_table(transfers_out.to_dict('records')) if not transfers_out.empty else "<p>No data available for transfers out.</p>"
+            free_hit_team_html = build_html_table(free_hit_team.to_dict('records')) if not free_hit_team.empty else "<p>No valid Free Hit squad could be formed within budget.</p>"
+            dgw_team_html = build_html_table(dgw_team.to_dict('records')) if not dgw_team.empty else "<p>No valid DGW squad could be formed within budget.</p>"
+            underperforming_players_html = build_html_table(underperforming_players.to_dict('records')) if not underperforming_players.empty else "<p>No underperforming players found.</p>"
+            replacements_html = build_html_table(pd.DataFrame(replacements).to_dict('records')) if replacements else "<p>No suggested replacements found.</p>"
 
             # Build HTML tables for starting XI and bench
-            starting_xi_html = starting_xi.to_html(index=False) if starting_xi is not None else "<p>No starting XI data available.</p>"
-            bench_html = bench.to_html(index=False) if bench is not None else "<p>No bench data available.</p>"
+            starting_xi_html = build_html_table(starting_xi.to_dict('records')) if starting_xi is not None else "<p>No starting XI data available.</p>"
+            bench_html = build_html_table(bench.to_dict('records')) if bench is not None else "<p>No bench data available.</p>"
 
             # Create the email body with HTML formatting
+            # Create the email body with HTML formatting
             email_body = f"""
-            <html>
-            <head>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    background-color: #f9f9f9;
-                    padding: 20px;
-                    color: #333333;
-                }}
-                h2 {{
-                    background-color: #0044cc;
-                    color: #ffffff;
-                    padding: 10px;
-                    border-radius: 5px;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                }}
-                th {{
-                    background-color: #007bff;
-                    color: #ffffff;
-                    padding: 10px;
-                }}
-                td {{
-                    padding: 8px;
-                    text-align: center;
-                    border: 1px solid #dddddd;
-                }}
-                tr:nth-child(even) {{
-                    background-color: #f2f2f2;
-                }}
-                tr:hover {{
-                    background-color: #e6f7ff;
-                }}
-                p {{
-                    padding: 10px;
-                    background-color: #eef2f7;
-                    border-left: 4px solid #0044cc;
-                    border-radius: 3px;
-                }}
-            </style>
-            </head>
-            <body>
-                <h2>GAMEWEEK: {CURRENT_GAMEWEEK}</h2>
                 <h2>🌟 Starting XI</h2>
                 {starting_xi_html}
                 <h2>🌟 Bench</h2>
@@ -881,8 +1027,46 @@ async def main():
                 <h2>🔽 Suggested Transfers Out</h2>
                 {transfers_out_html}
                 <h2>🎖 Captaincy Recommendations</h2>
-                <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
-                <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
+            """
+
+            # Safely extract captain data
+            if not captain.empty and 'team' in captain.columns:
+                captain_name = captain.iloc[0].get('full_name', 'Unknown')
+                captain_team = get_team_name(captain.iloc[0].get('team', 0))
+                captain_form = captain.iloc[0].get('form', 'N/A')
+                captain_fdr = captain.iloc[0].get('fixture_difficulty', 'N/A')
+            else:
+                captain_name = 'No valid captain'
+                captain_team = 'N/A'
+                captain_form = 'N/A'
+                captain_fdr = 'N/A'
+
+            # Safely extract vice-captain data
+            if not vice_captain.empty and 'team' in vice_captain.columns:
+                vice_captain_name = vice_captain.iloc[0].get('full_name', 'Unknown')
+                vice_captain_team = get_team_name(vice_captain.iloc[0].get('team', 0))
+                vice_captain_form = vice_captain.iloc[0].get('form', 'N/A')
+                vice_captain_fdr = vice_captain.iloc[0].get('fixture_difficulty', 'N/A')
+            else:
+                vice_captain_name = 'No valid vice-captain'
+                vice_captain_team = 'N/A'
+                vice_captain_form = 'N/A'
+                vice_captain_fdr = 'N/A'
+
+            email_body += f"""
+                <p><strong>Captain:</strong> {captain_name} 
+                (Team: {captain_team}, 
+                Form: {captain_form}, 
+                FDR: {captain_fdr})</p>
+
+                <p><strong>Vice-Captain:</strong> {vice_captain_name} 
+                (Team: {vice_captain_team}, 
+                Form: {vice_captain_form}, 
+                FDR: {vice_captain_fdr})</p>
+            """
+
+            # Add the rest of the email body
+            email_body += f"""
                 <h2>🌟 Bench Boost Suggestion</h2>
                 <p>{bench_boost_suggestion}</p>
                 <h2>🌟 Triple Captain Suggestion</h2>
@@ -906,8 +1090,6 @@ async def main():
                 {underperforming_players_html}
                 <p>Suggested Replacements:</p>
                 {replacements_html}
-            </body>
-            </html>
             """
 
             # Send email with suggestions
