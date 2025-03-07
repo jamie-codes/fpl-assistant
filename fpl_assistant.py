@@ -33,7 +33,9 @@ EMAIL_CONFIG = {
 # Logging
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-LOG_FILE = f"{LOG_DIR}/fpl_assistant.log"
+# Generate a unique log file name with a timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # Format: YYYYMMDD_HHMMSS
+LOG_FILE = f"{LOG_DIR}/fpl_assistant_{timestamp}.log"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -102,6 +104,10 @@ async def get_fixture_difficulties(fpl):
 
 async def calculate_team_fdr(team_fixtures, team_id):
     """Calculate the total fixture difficulty rating (FDR) for a team over the next few gameweeks."""
+    if not team_id or team_id not in team_fixtures:
+        logger.warning(f"⚠️ Invalid team ID or no fixture data found for team ID: {team_id}")
+        return 5 * FIXTURE_LOOKAHEAD  # Default to maximum difficulty if no data is found
+
     fixtures = team_fixtures.get(team_id, {})
     upcoming_fdrs = []
     for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
@@ -111,8 +117,12 @@ async def calculate_team_fdr(team_fixtures, team_id):
     return sum(upcoming_fdrs)
 
 async def fetch_player_data(fpl, player, team_fixtures):
-    """Fetch and format player data, including team logos and player photos."""
     try:
+        # Check if player object is valid and has required attributes
+        if not player or not hasattr(player, 'team') or not hasattr(player, 'element_type'):
+            logger.warning(f"⚠️ Invalid player object or missing attributes for player: {player}")
+            return None
+
         if not player.team or not player.element_type:
             logger.warning(f"⚠️ Missing team or position data for player {player.first_name} {player.second_name}")
             return None
@@ -248,6 +258,11 @@ async def suggest_captain(fpl, team_fixtures, user_team):
         my_players = [await fpl.get_player(p["element"]) for p in user_team]
         captain_data = []
         for player in my_players:
+            # Check if player object is valid and has required attributes
+            if not player or not hasattr(player, 'team'):
+                logger.warning(f"⚠️ Invalid player object or missing team attribute for player: {player}")
+                continue
+
             fdr = await calculate_team_fdr(team_fixtures, player.team)
             captain_score = (float(player.form) * 0.4) + (player.total_points * 0.3) + ((6 - fdr) * 0.3)
             captain_data.append({
@@ -258,6 +273,10 @@ async def suggest_captain(fpl, team_fixtures, user_team):
                 "fixture_difficulty": fdr,
                 "captain_score": captain_score
             })
+
+        if not captain_data:
+            logger.warning("⚠️ No valid captain data found.")
+            return pd.DataFrame(), pd.DataFrame()  # Return empty DataFrames
 
         df = pd.DataFrame(captain_data)
         captain = df.sort_values(by="captain_score", ascending=False).head(1)
@@ -916,6 +935,20 @@ async def main():
 
             logger.info("\n🎖 Captaincy Recommendations:")
             captain, vice_captain = await suggest_captain(fpl, team_fixtures, user_team)
+
+            # Log the captain and vice-captain data for debugging
+            logger.info("Captain data: %s", captain)
+            logger.info("Vice-Captain data: %s", vice_captain)
+
+            if not captain.empty:
+                logger.info("Captain: %s", captain.iloc[0]['full_name'])
+            else:
+                logger.warning("⚠️ No valid captain data found.")
+
+            if not vice_captain.empty:
+                logger.info("Vice-Captain: %s", vice_captain.iloc[0]['full_name'])
+            else:
+                logger.warning("⚠️ No valid vice-captain data found.")
             logger.info("Captain: %s", captain)
             logger.info("Vice-Captain: %s", vice_captain)
 
@@ -988,8 +1021,19 @@ async def main():
                 <h2>🔽 Suggested Transfers Out</h2>
                 {transfers_out_html}
                 <h2>🎖 Captaincy Recommendations</h2>
-                <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
-                <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
+            """
+
+            # Check if captain and vice_captain are valid
+            if not captain.empty and not vice_captain.empty:
+                email_body += f"""
+                    <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
+                    <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
+                """
+            else:
+                email_body += "<p>No valid captain or vice-captain data found.</p>"
+
+            # Add the rest of the email body
+            email_body += f"""
                 <h2>🌟 Bench Boost Suggestion</h2>
                 <p>{bench_boost_suggestion}</p>
                 <h2>🌟 Triple Captain Suggestion</h2>
