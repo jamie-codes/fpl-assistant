@@ -164,12 +164,24 @@ async def fetch_player_data(fpl, player, team_fixtures):
         return None
     
 def generate_player_row(player):
-    """Generate an HTML table row for a player, including team logos and player photos."""
+    player_photo = player.get('player_photo') or 'https://via.placeholder.com/40x50?text=Player'
+    team_logo = player.get('team_logo') or 'https://via.placeholder.com/30x30?text=Logo'
+
     return f"""
     <tr>
-        <td><img src="{player.get('player_photo', 'https://via.placeholder.com/50')}" alt="{player.get('full_name', 'Unknown')}">
-        {player.get('full_name', 'Unknown')}</td>
-        <td><img src="{player.get('team_logo', 'https://via.placeholder.com/30')}" alt="Team Logo" title="{get_team_name(player.get('team', 0))}"></td>
+        <td>
+            <img src="{player_photo}" 
+                 alt="{player.get('full_name', 'Unknown')}" 
+                 style="width:30px; height:40px; border-radius:5px; margin-right:5px;">
+            {player.get('full_name', 'Unknown')}
+        </td>
+        <td>
+            <img src="{team_logo}" 
+                 alt="Team Logo" 
+                 title="{get_team_name(player.get('team', 0))}" 
+                 style="width:20px; height:20px; border-radius:50%; margin-right:5px;">
+            {get_team_name(player.get('team', 0))}
+        </td>
         <td>{player.get('position', 'Unknown')}</td>
         <td>{player.get('form', 'N/A')}</td>
         <td>{player.get('total_points', 'N/A')}</td>
