@@ -167,14 +167,15 @@ def generate_player_row(player):
     """Generate an HTML table row for a player, including team logos and player photos."""
     return f"""
     <tr>
-        <td><img src="{player.get('player_photo', 'https://via.placeholder.com/50')}" alt="{player['full_name']}" width="50" height="50"> {player['full_name']}</td>
-        <td><img src="{player.get('team_logo', 'https://via.placeholder.com/30')}" alt="Team Logo" width="30" height="30" title="{get_team_name(player['team'])}"></td>
-        <td>{player['position']}</td>
-        <td>{player['form']}</td>
-        <td>{player['total_points']}</td>
-        <td>{player['now_cost']}</td>
-        <td>{player['fixture_difficulty']}</td>
-        <td>{player['vfm']:.2f}</td>
+        <td><img src="{player.get('player_photo', 'https://via.placeholder.com/50')}" alt="{player.get('full_name', 'Unknown')}">
+        {player.get('full_name', 'Unknown')}</td>
+        <td><img src="{player.get('team_logo', 'https://via.placeholder.com/30')}" alt="Team Logo" title="{get_team_name(player.get('team', 0))}"></td>
+        <td>{player.get('position', 'Unknown')}</td>
+        <td>{player.get('form', 'N/A')}</td>
+        <td>{player.get('total_points', 'N/A')}</td>
+        <td>{player.get('now_cost', 'N/A')}</td>
+        <td>{player.get('fixture_difficulty', 'N/A')}</td>
+        <td>{player.get('vfm', 'N/A')}</td>
     </tr>
     """
 
@@ -1028,28 +1029,41 @@ async def main():
                 <h2>🎖 Captaincy Recommendations</h2>
             """
 
-            # Captain section
-            if not captain.empty and 'team' in captain.columns and 'full_name' in captain.columns:
-                email_body += f"""
-                    <p><strong>Captain:</strong> {captain.iloc[0].get('full_name', 'Unknown')} 
-                    (Team: {get_team_name(captain.iloc[0].get('team', 0))}, 
-                    Form: {captain.iloc[0].get('form', 'N/A')}, 
-                    FDR: {captain.iloc[0].get('fixture_difficulty', 'N/A')})</p>
-                """
+            # Safely extract captain data
+            if not captain.empty and 'team' in captain.columns:
+                captain_name = captain.iloc[0].get('full_name', 'Unknown')
+                captain_team = get_team_name(captain.iloc[0].get('team', 0))
+                captain_form = captain.iloc[0].get('form', 'N/A')
+                captain_fdr = captain.iloc[0].get('fixture_difficulty', 'N/A')
             else:
-                email_body += "<p><strong>Captain:</strong> No valid captain data available.</p>"
+                captain_name = 'No valid captain'
+                captain_team = 'N/A'
+                captain_form = 'N/A'
+                captain_fdr = 'N/A'
 
-            # Vice-Captain section
-            if not vice_captain.empty and 'team' in vice_captain.columns and 'full_name' in vice_captain.columns:
-                email_body += f"""
-                    <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0].get('full_name', 'Unknown')} 
-                    (Team: {get_team_name(vice_captain.iloc[0].get('team', 0))}, 
-                    Form: {vice_captain.iloc[0].get('form', 'N/A')}, 
-                    FDR: {vice_captain.iloc[0].get('fixture_difficulty', 'N/A')})</p>
-                """
+            # Safely extract vice-captain data
+            if not vice_captain.empty and 'team' in vice_captain.columns:
+                vice_captain_name = vice_captain.iloc[0].get('full_name', 'Unknown')
+                vice_captain_team = get_team_name(vice_captain.iloc[0].get('team', 0))
+                vice_captain_form = vice_captain.iloc[0].get('form', 'N/A')
+                vice_captain_fdr = vice_captain.iloc[0].get('fixture_difficulty', 'N/A')
             else:
-                email_body += "<p><strong>Vice-Captain:</strong> No valid vice-captain data available.</p>"
+                vice_captain_name = 'No valid vice-captain'
+                vice_captain_team = 'N/A'
+                vice_captain_form = 'N/A'
+                vice_captain_fdr = 'N/A'
 
+            email_body += f"""
+                <p><strong>Captain:</strong> {captain_name} 
+                (Team: {captain_team}, 
+                Form: {captain_form}, 
+                FDR: {captain_fdr})</p>
+
+                <p><strong>Vice-Captain:</strong> {vice_captain_name} 
+                (Team: {vice_captain_team}, 
+                Form: {vice_captain_form}, 
+                FDR: {vice_captain_fdr})</p>
+            """
 
             # Add the rest of the email body
             email_body += f"""
