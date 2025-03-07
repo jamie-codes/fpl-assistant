@@ -51,6 +51,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def load_cookies():
     """Load cookies from cookies.json."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -780,6 +781,99 @@ async def analyze_historical_performance(fpl, player_id):
         logger.error(f"❌ Error analyzing historical performance: {e}")
         raise
 
+
+# EMAIL section
+# Placeholder URLs
+DEFAULT_TEAM_LOGO = "https://example.com/default_team_logo.png"
+DEFAULT_PLAYER_PHOTO = "https://example.com/default_player_photo.png"
+
+async def fetch_player_data(fpl, player, team_fixtures):
+    try:
+        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png" if player.team else DEFAULT_TEAM_LOGO
+        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png" if player.code else DEFAULT_PLAYER_PHOTO
+
+        data = {
+            "full_name": f"{player.first_name} {player.second_name}",
+            "team": player.team,
+            "position": player.element_type,
+            "form": float(player.form),
+            "total_points": player.total_points,
+            "now_cost": player.now_cost / 10,
+            "fixture_difficulty": await calculate_team_fdr(team_fixtures, player.team),
+            "team_logo": team_logo_url,
+            "player_photo": player_photo_url
+        }
+        return data
+    except Exception as e:
+        logger.error(f"❌ Error fetching data for player {player.first_name} {player.second_name}: {e}")
+        return None
+
+async def get_team_fixtures():
+    # Placeholder: implement your real fixture fetching logic here
+    return {
+        # Example fixture difficulties per team ID
+        1: {28: 2, 29: 3, 30: 2},
+        2: {28: 4, 29: 5, 30: 3},
+        # etc...
+    }
+
+def generate_player_row(player):
+    return f"""
+    <tr class='{player['position'].lower()}'>
+        <td><img src='{player['player_photo']}' class='player-photo' alt='Player Photo'> {player['full_name']}</td>
+        <td><img src='{player['team_logo']}' class='team-logo' alt='Team Logo'></td>
+        <td>{player['form']}</td>
+        <td>{player['total_points']}</td>
+        <td>{player['fixture_difficulty']}</td>
+    </tr>
+    """
+
+def build_html_table(players):
+    rows = ''.join([generate_player_row(player) for player in sorted(players, key=lambda x: (-x['total_points'], -x['form']))])
+    table = f"""
+    <table>
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Team</th>
+                <th>Form</th>
+                <th>Total Points</th>
+                <th>Fixture Difficulty</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows}
+        </tbody>
+    </table>
+    """
+    return table
+
+async def send_email(html_content):
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    sender_email = "you@example.com"
+    receiver_email = "you@example.com"
+    password = "your_email_password"
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = "📊 FPL Weekly Update"
+    message["From"] = sender_email
+    message["To"] = receiver_email
+
+    part = MIMEText(html_content, "html")
+    message.attach(part)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, password)
+            server.sendmail(sender_email, receiver_email, message.as_string())
+        logger.info("✅ Email sent successfully.")
+    except Exception as e:
+        logger.error(f"❌ Failed to send email: {e}")
+
+
 async def main():
     """Main function to run the FPL assistant."""
     try:
@@ -795,6 +889,7 @@ async def main():
             user_team = await user.get_team()
             logger.debug(f"User team structure: {user_team}")
 
+            players = await fpl.get_players()
             team_fixtures = await get_fixture_difficulties(fpl)
 
             logger.info("\n🔼 Best Players to Pick:")
@@ -857,12 +952,35 @@ async def main():
             await export_dataframes(best_players, transfers_out)
 
             # Convert dataframes to HTML tables
-            best_players_html = best_players.to_html(index=False)
-            transfers_out_html = transfers_out.to_html(index=False)
-            free_hit_team_html = free_hit_team.to_html(index=False)
-            dgw_team_html = dgw_team.to_html(index=False)
-            underperforming_players_html = underperforming_players.to_html(index=False)
-            replacements_html = pd.DataFrame(replacements).to_html(index=False)
+            best_players_html = best_players.to_html(index=False) if not best_players.empty else "<p>No data available for best players.</p>"
+            transfers_out_html = transfers_out.to_html(index=False) if not transfers_out.empty else "<p>No data available for transfers out.</p>"
+            free_hit_team_html = free_hit_team.to_html(index=False) if not free_hit_team.empty else "<p>No valid Free Hit squad could be formed within budget.</p>"
+            dgw_team_html = dgw_team.to_html(index=False) if not dgw_team.empty else "<p>No valid DGW squad could be formed within budget.</p>"
+            underperforming_players_html = underperforming_players.to_html(index=False) if not underperforming_players.empty else "<p>No underperforming players found.</p>"
+            replacements_html = pd.DataFrame(replacements).to_html(index=False) if replacements else "<p>No suggested replacements found.</p>"
+
+            # Build full player data
+            my_players = []
+            for player in players:
+                player_data = await fetch_player_data(fpl, player, team_fixtures)
+                if player_data:
+                    my_players.append(player_data)
+
+            # Split into categories as needed
+            starting_xi = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:11]
+            bench = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[11:15]
+            best_players = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:15]
+            transfers_out = sorted(my_players, key=lambda x: (x["form"], x["total_points"]))[:5]
+            free_hit_team = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:15]
+            dgw_team = sorted(my_players, key=lambda x: (-x["total_points"], -x["form"]))[:15]
+
+            # Build HTML tables
+            starting_xi_html = build_html_table(starting_xi) if starting_xi else "<p>No starting XI data available.</p>"
+            bench_html = build_html_table(bench) if bench else "<p>No bench data available.</p>"
+            best_players_html = build_html_table(best_players) if best_players else "<p>No best players data available.</p>"
+            transfers_out_html = build_html_table(transfers_out) if transfers_out else "<p>No transfers out data available.</p>"
+            free_hit_html = build_html_table(free_hit_team) if free_hit_team else "<p>No Free Hit team data available.</p>"
+            dgw_team_html = build_html_table(dgw_team) if dgw_team else "<p>No DGW team data available.</p>"
 
             # Create the email body with HTML formatting
             email_body = f"""
@@ -941,6 +1059,10 @@ async def main():
                 {underperforming_players_html}
                 <p>Suggested Replacements:</p>
                 {replacements_html}
+                <h2>🌟 Starting XI</h2>
+                {starting_xi_html}
+                <h2>🌟 Bench</h2>
+                {bench_html}
             </body>
             </html>
             """
