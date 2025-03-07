@@ -28,6 +28,13 @@ This Python script helps you manage your Fantasy Premier League (FPL) team by:
 ✅ Styled HTML email notifications with detailed weekly reports.  
 ✅ Automatic export of suggestions to CSV and Excel files.  
 ✅ Organized logs and outputs into `/logs` and `/output` folders.
+✅ Automatic Starting XI and Bench selection with optimized formations.  
+✅ Captain and Vice-Captain recommendations based on form, points, and fixtures.  
+✅ Free Hit and Double Gameweek team builders within budget, factoring in fixture difficulty.  
+✅ Injury and Suspension tracker for monitoring player availability.  
+✅ Team Value tracker with current squad value.  
+✅ Comprehensive Current Team Analysis with transfer suggestions.  
+✅ Dynamic gameweek detection for accurate scheduling.  
 
 ---
 
@@ -126,9 +133,6 @@ FIXTURE_LOOKAHEAD = 5       # Number of upcoming fixtures to consider
 ## 🌟 Future Ideas
 - Advanced squad optimization based on budget and formation.
 - Value for Money ranking (VFM) to help identify high-scoring low-cost gems that maximize budget efficiency.
-- Perfect Free Hit Squad Selector (within budget)
-- Double Gameweek (DGW) & Blank Gameweek (BGW) Planner
-- Injury & Rotation Risk Filter
 - Visual charts of fixture difficulty and player trends.
 - More detailed email reports with graphs and player insights.
 - Automated backtesting of transfer strategies.

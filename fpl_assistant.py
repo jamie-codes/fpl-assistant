@@ -111,7 +111,7 @@ async def calculate_team_fdr(team_fixtures, team_id):
     return sum(upcoming_fdrs)
 
 async def fetch_player_data(fpl, player, team_fixtures):
-    """Fetch and format player data."""
+    """Fetch and format player data, including team logos and player photos."""
     try:
         if not player.team or not player.element_type:
             logger.warning(f"⚠️ Missing team or position data for player {player.first_name} {player.second_name}")
@@ -128,19 +128,95 @@ async def fetch_player_data(fpl, player, team_fixtures):
 
         form = float(player.form) if player.form not in [None, ""] else 0.0
         now_cost = player.now_cost / 10 if player.now_cost else 0.0
+        total_points = player.total_points if player.total_points else 0.0
+
+        # Calculate Value for Money (VFM)
+        vfm = total_points / now_cost if now_cost > 0 else 0.0
+
+        # Fetch team logo and player photo URLs
+        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png"
+        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png"
 
         return {
             "full_name": f"{player.first_name} {player.second_name}",
             "team": player.team,
+            "team_logo": team_logo_url,  # Add team logo URL
+            "player_photo": player_photo_url,  # Add player photo URL
             "position": position,
             "form": form,
-            "total_points": player.total_points,
+            "total_points": total_points,
             "now_cost": now_cost,
-            "fixture_difficulty": fdr
+            "fixture_difficulty": fdr,
+            "vfm": vfm
         }
     except Exception as e:
         logger.error(f"❌ Error fetching data for player {player.first_name} {player.second_name}: {e}")
         return None
+    
+def generate_player_row(player):
+    """Generate an HTML table row for a player, including team logos and player photos."""
+    return f"""
+    <tr>
+        <td><img src="{player['player_photo']}" alt="{player['full_name']}" width="50" height="50"> {player['full_name']}</td>
+        <td><img src="{player['team_logo']}" alt="Team Logo" width="30" height="30" title="{get_team_name(player['team'])}"></td>
+        <td>{player['position']}</td>
+        <td>{player['form']}</td>
+        <td>{player['total_points']}</td>
+        <td>{player['now_cost']}</td>
+        <td>{player['fixture_difficulty']}</td>
+        <td>{player['vfm']:.2f}</td>
+    </tr>
+    """
+
+def get_team_name(team_id):
+    """Map team IDs to team names."""
+    team_names = {
+        1: "Arsenal",
+        2: "Aston Villa",
+        3: "Brentford",
+        4: "Brighton",
+        5: "Burnley",
+        6: "Chelsea",
+        7: "Crystal Palace",
+        8: "Everton",
+        9: "Leicester",
+        10: "Leeds",
+        11: "Liverpool",
+        12: "Man City",
+        13: "Man Utd",
+        14: "Newcastle",
+        15: "Norwich",
+        16: "Southampton",
+        17: "Spurs",
+        18: "Watford",
+        19: "West Ham",
+        20: "Wolves"
+    }
+    return team_names.get(team_id, "Unknown Team")
+
+def build_html_table(players):
+    """Build an HTML table with team logos, player photos, and hover-over tooltips."""
+    rows = ''.join([generate_player_row(player) for player in players])
+    table = f"""
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <thead>
+            <tr>
+                <th>Player</th>
+                <th>Team</th>
+                <th>Position</th>
+                <th>Form</th>
+                <th>Total Points</th>
+                <th>Cost</th>
+                <th>FDR</th>
+                <th>VFM</th>
+            </tr>
+        </thead>
+        <tbody>
+            {rows}
+        </tbody>
+    </table>
+    """
+    return table
 
 async def suggest_best_players(fpl, team_fixtures, top_n=10):
     """Suggest the best players to pick based on form, points, and FDR."""
@@ -424,7 +500,76 @@ async def send_email(subject, body):
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
 
-        msg.attach(MIMEText(body, "html"))
+        # Attach the HTML body with improved styling
+        email_body = f"""
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    background-color: #f9f9f9;
+                    padding: 20px;
+                    color: #333333;
+                }}
+                .email-container {{
+                    max-width: 800px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    padding: 20px;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+                }}
+                h2 {{
+                    background-color: #0044cc;
+                    color: #ffffff;
+                    padding: 10px;
+                    border-radius: 5px;
+                    text-align: center;
+                }}
+                table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                }}
+                th, td {{
+                    padding: 10px;
+                    text-align: center;
+                    border: 1px solid #dddddd;
+                }}
+                th {{
+                    background-color: #007bff;
+                    color: #ffffff;
+                }}
+                tr:nth-child(even) {{
+                    background-color: #f2f2f2;
+                }}
+                tr:hover {{
+                    background-color: #e6f7ff;
+                }}
+                img {{
+                    vertical-align: middle;
+                }}
+                .footer {{
+                    text-align: center;
+                    margin-top: 20px;
+                    font-size: 12px;
+                    color: #777777;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="email-container">
+                <h2>Your Weekly FPL Suggestions</h2>
+                {body}
+                <div class="footer">
+                    <p>This email was generated by the FPL Assistant. Please do not reply to this email.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        msg.attach(MIMEText(email_body, "html"))
 
         with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
             server.starttls()
@@ -813,12 +958,12 @@ async def main():
             await export_dataframes(best_players, transfers_out)
 
             # Convert dataframes to HTML tables
-            best_players_html = best_players.to_html(index=False) if not best_players.empty else "<p>No data available for best players.</p>"
-            transfers_out_html = transfers_out.to_html(index=False) if not transfers_out.empty else "<p>No data available for transfers out.</p>"
-            free_hit_team_html = free_hit_team.to_html(index=False) if not free_hit_team.empty else "<p>No valid Free Hit squad could be formed within budget.</p>"
-            dgw_team_html = dgw_team.to_html(index=False) if not dgw_team.empty else "<p>No valid DGW squad could be formed within budget.</p>"
-            underperforming_players_html = underperforming_players.to_html(index=False) if not underperforming_players.empty else "<p>No underperforming players found.</p>"
-            replacements_html = pd.DataFrame(replacements).to_html(index=False) if replacements else "<p>No suggested replacements found.</p>"
+            best_players_html = build_html_table(best_players.to_dict('records')) if not best_players.empty else "<p>No data available for best players.</p>"
+            transfers_out_html = build_html_table(transfers_out.to_dict('records')) if not transfers_out.empty else "<p>No data available for transfers out.</p>"
+            free_hit_team_html = build_html_table(free_hit_team.to_dict('records')) if not free_hit_team.empty else "<p>No valid Free Hit squad could be formed within budget.</p>"
+            dgw_team_html = build_html_table(dgw_team.to_dict('records')) if not dgw_team.empty else "<p>No valid DGW squad could be formed within budget.</p>"
+            underperforming_players_html = build_html_table(underperforming_players.to_dict('records')) if not underperforming_players.empty else "<p>No underperforming players found.</p>"
+            replacements_html = build_html_table(pd.DataFrame(replacements).to_dict('records')) if replacements else "<p>No suggested replacements found.</p>"
 
             # Build HTML tables for starting XI and bench
             starting_xi_html = starting_xi.to_html(index=False) if starting_xi is not None else "<p>No starting XI data available.</p>"
