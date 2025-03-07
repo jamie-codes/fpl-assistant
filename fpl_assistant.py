@@ -145,7 +145,17 @@ async def fetch_player_data(fpl, player, team_fixtures):
         vfm = round(total_points / now_cost, 2) if now_cost > 0 else 0.0
 
         # Fetch team logo and player photo URLs (handle missing fields)
-        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png" if player.team else "https://via.placeholder.com/30"
+        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png"
+        # Verify if the URL is accessible, if not use a fallback
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(team_logo_url) as response:
+                    if response.status != 200:
+                        team_logo_url = "https://via.placeholder.com/30"
+        except Exception as e:
+            logger.error(f"❌ Error verifying team logo URL: {e}")
+            team_logo_url = "https://via.placeholder.com/30"
+
         player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png" if hasattr(player, 'code') and player.code else "https://via.placeholder.com/50"
 
         return {
@@ -249,19 +259,34 @@ def build_html_table(players):
 async def suggest_best_players(fpl, team_fixtures, top_n=10):
     """Suggest the best players to pick based on form, points, and FDR."""
     try:
+        logger.info("Fetching players data...")
         players = await fpl.get_players()
         player_data = []
+
         for player in players:
-            data = await fetch_player_data(fpl, player, team_fixtures)
-            if data:
-                player_data.append(data)
+            try:
+                logger.debug(f"Fetching data for player: {player.first_name} {player.second_name}")
+                data = await fetch_player_data(fpl, player, team_fixtures)
+                if data:
+                    player_data.append(data)
+                # Add a small delay to avoid hitting rate limits
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"❌ Error fetching data for player {player.first_name} {player.second_name}: {e}")
+                continue
+
+        if not player_data:
+            logger.warning("⚠️ No valid player data found.")
+            return pd.DataFrame()
 
         df = pd.DataFrame(player_data)
+        logger.info("Sorting players by form, total points, and FDR...")
         top_players = df.sort_values(
             by=["form", "total_points", "fixture_difficulty"],
             ascending=[False, False, True]
         ).head(top_n)
 
+        logger.info("✅ Best players suggestion completed.")
         return top_players
     except Exception as e:
         logger.error(f"❌ Error suggesting best players: {e}")
