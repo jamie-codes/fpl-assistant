@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 # Configuration
 TEAM_ID = 6378398
 FIXTURE_LOOKAHEAD = 5  # Number of fixtures to consider
-LOG_FILE = "fpl_assistant.log"
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,13 +21,12 @@ load_dotenv()
 # Access the email password
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
-# Use EMAIL_PASSWORD in your email configuration
+# Email configuration
 EMAIL_CONFIG = {
     "smtp_server": "smtp.gmail.com",
-
     "smtp_port": 587,
     "sender_email": "user.invalid@gmail.com",
-    "sender_password": EMAIL_PASSWORD,  # Use the environment variable
+    "sender_password": EMAIL_PASSWORD,
     "receiver_email": "user.invalid@gmail.com"
 }
 
@@ -36,13 +34,11 @@ EMAIL_CONFIG = {
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 LOG_FILE = f"{LOG_DIR}/fpl_assistant.log"
-# Ensure directories exist
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# Set up logging with UTF-8 encoding
 logging.basicConfig(
-    level=logging.DEBUG,  # Enable DEBUG level logging
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(LOG_FILE, encoding="utf-8"),
@@ -50,7 +46,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
 
 def load_cookies():
     """Load cookies from cookies.json."""
@@ -67,6 +62,7 @@ def load_cookies():
         raise
 
 CURRENT_GAMEWEEK = None
+
 async def get_current_gameweek(fpl):
     """Fetch the current active gameweek from the FPL API."""
     try:
@@ -78,12 +74,13 @@ async def get_current_gameweek(fpl):
                 logger.info(f"📅 Using Gameweek: {gw.id} for suggestions going forward.")
                 return gw.id
         logger.warning("⚠️ No active gameweek found. Defaulting to 1.")
-        return 1  # Fallback if no current gameweek is active
+        return 1
     except Exception as e:
         logger.error(f"❌ Error fetching current gameweek: {e}")
         raise
 
 async def get_fixture_difficulties(fpl):
+    """Fetch fixture difficulties for all teams."""
     try:
         fixtures = await fpl.get_fixtures()
         team_fixtures = {}
@@ -106,22 +103,21 @@ async def get_fixture_difficulties(fpl):
 async def calculate_team_fdr(team_fixtures, team_id):
     """Calculate the total fixture difficulty rating (FDR) for a team over the next few gameweeks."""
     fixtures = team_fixtures.get(team_id, {})
-
-    # Get the FDRs for the next FIXTURE_LOOKAHEAD gameweeks
     upcoming_fdrs = []
     for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
         fdr = fixtures.get(gw, 5)  # Default to 5 if no fixture data
         capped_fdr = max(1, min(float(fdr), 5))
         upcoming_fdrs.append(capped_fdr)
-
     return sum(upcoming_fdrs)
 
 async def fetch_player_data(fpl, player, team_fixtures):
     """Fetch and format player data."""
     try:
-        fdr = await calculate_team_fdr(team_fixtures, player.team)
+        if not player.team or not player.element_type:
+            logger.warning(f"⚠️ Missing team or position data for player {player.first_name} {player.second_name}")
+            return None
 
-        # Map element_type to position
+        fdr = await calculate_team_fdr(team_fixtures, player.team)
         position_map = {
             1: "Goalkeeper",
             2: "Defender",
@@ -153,7 +149,7 @@ async def suggest_best_players(fpl, team_fixtures, top_n=10):
         player_data = []
         for player in players:
             data = await fetch_player_data(fpl, player, team_fixtures)
-            if data:  # Only append valid player data
+            if data:
                 player_data.append(data)
 
         df = pd.DataFrame(player_data)
@@ -177,7 +173,7 @@ async def suggest_captain(fpl, team_fixtures, user_team):
             captain_score = (float(player.form) * 0.4) + (player.total_points * 0.3) + ((6 - fdr) * 0.3)
             captain_data.append({
                 "full_name": f"{player.first_name} {player.second_name}",
-                "team": player.team,  # Ensure the "team" column is included
+                "team": player.team,
                 "form": float(player.form),
                 "total_points": player.total_points,
                 "fixture_difficulty": fdr,
@@ -221,9 +217,9 @@ async def suggest_transfers_out(fpl, team_fixtures, user_team):
         raise
 
 async def suggest_bench_boost(fpl, team_fixtures, user_team):
+    """Suggest when to use the Bench Boost chip."""
     try:
         bench_players = []
-
         for player in user_team:
             if player["position"] >= 12:
                 player_data = await fpl.get_player(player["element"])
@@ -243,7 +239,7 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
         for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
             total_bench_score = 0
             for player in bench_players:
-                fdr = team_fixtures.get(player.team, {}).get(gw, default_fixture_value)
+                fdr = team_fixtures.get(player.team, {}).get(gw, 5)
                 capped_fdr = max(1, min(fdr, 5))
                 bench_score = max(0, (float(player.form) * 0.6) + ((5 - capped_fdr) * 0.4))
                 total_bench_score += bench_score
@@ -260,8 +256,8 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
         logger.error(f"❌ Error suggesting Bench Boost: {e}")
         raise
 
-default_fixture_value = 5
 async def suggest_triple_captain(fpl, team_fixtures, user_team):
+    """Suggest when to use the Triple Captain chip."""
     try:
         captain, _ = await suggest_captain(fpl, team_fixtures, user_team)
         captain_team_id = captain.iloc[0]["team"]
@@ -277,7 +273,7 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
         valid_fixtures_found = False
 
         for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD):
-            fdr = fixtures.get(gw, default_fixture_value)
+            fdr = fixtures.get(gw, 5)
             logger.debug(f"Gameweek {gw} - FDR: {fdr}")
             if fdr < easiest_fdr:
                 easiest_fdr = fdr
@@ -293,24 +289,20 @@ async def suggest_triple_captain(fpl, team_fixtures, user_team):
         logger.error(f"❌ Error suggesting Triple Captain: {e}")
         raise
 
-# Simple logic here, could be improved by comparing current team selection (injuries etc.)
 async def suggest_wildcard():
     """Suggest when to play the Wildcard chip."""
     if CURRENT_GAMEWEEK <= 20:
         return "Play Wildcard in the first half of the season (before Gameweek 20)."
     else:
         return "Play Wildcard in the second half of the season (after Gameweek 20)."
-    
+
 async def analyze_current_team(fpl, team_fixtures, user_team):
     """Analyze the current team and bench selection, suggesting improvements for upcoming games."""
     try:
         my_players = [await fpl.get_player(p["element"]) for p in user_team]
         team_data = []
-
         for player in my_players:
             fdr = await calculate_team_fdr(team_fixtures, player.team)
-            
-            # Map element_type to position
             position_map = {
                 1: "Goalkeeper",
                 2: "Defender",
@@ -321,7 +313,7 @@ async def analyze_current_team(fpl, team_fixtures, user_team):
 
             team_data.append({
                 "full_name": f"{player.first_name} {player.second_name}",
-                "position": position,  # Add position mapping
+                "position": position,
                 "form": float(player.form),
                 "total_points": player.total_points,
                 "now_cost": player.now_cost / 10,
@@ -330,15 +322,12 @@ async def analyze_current_team(fpl, team_fixtures, user_team):
             })
 
         df = pd.DataFrame(team_data)
-
-        # Identify underperforming players
         underperforming_players = df[
             (df["form"] < 2.0) |
             (df["status"] != "a") |
             (df["fixture_difficulty"] > (FIXTURE_LOOKAHEAD * 3))
         ]
 
-        # Suggest replacements for underperforming players
         replacements = []
         for _, player in underperforming_players.iterrows():
             replacement = await suggest_replacement(fpl, team_fixtures, player)
@@ -355,9 +344,7 @@ async def suggest_replacement(fpl, team_fixtures, player):
     try:
         players = await fpl.get_players()
         player_data = []
-
         for p in players:
-            # Map element_type to position
             position_map = {
                 1: "Goalkeeper",
                 2: "Defender",
@@ -366,14 +353,12 @@ async def suggest_replacement(fpl, team_fixtures, player):
             }
             position = position_map.get(p.element_type, "Unknown")
 
-            if position == player["position"] and p.now_cost / 10 <= player["now_cost"] + 1.0:  # Allow slight budget increase
+            if position == player["position"] and p.now_cost / 10 <= player["now_cost"] + 1.0:
                 data = await fetch_player_data(fpl, p, team_fixtures)
                 if data:
                     player_data.append(data)
 
         df = pd.DataFrame(player_data)
-
-        # Sort by form, points, and FDR
         replacement = df.sort_values(
             by=["form", "total_points", "fixture_difficulty"],
             ascending=[False, False, True]
@@ -395,8 +380,6 @@ async def suggest_free_hit(fpl):
     try:
         fixtures = await fpl.get_fixtures()
         gameweek_fixtures = {}
-
-        # Count fixtures per gameweek
         for fixture in fixtures:
             if fixture.event is None or fixture.finished:
                 continue
@@ -404,7 +387,6 @@ async def suggest_free_hit(fpl):
                 gameweek_fixtures[fixture.event] = 0
             gameweek_fixtures[fixture.event] += 1
 
-        # Identify blank and double gameweeks
         blank_gameweeks = [gw for gw, count in gameweek_fixtures.items() if count < 5]
         double_gameweeks = [gw for gw, count in gameweek_fixtures.items() if count > 10]
 
@@ -419,6 +401,7 @@ async def suggest_free_hit(fpl):
         raise
 
 async def export_dataframes(best_players, transfers_out):
+    """Export dataframes to CSV and Excel files."""
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M')
         best_players.to_csv(f'{OUTPUT_DIR}/best_players_{timestamp}.csv', index=False)
@@ -441,7 +424,6 @@ async def send_email(subject, body):
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
 
-        # Attach the HTML body
         msg.attach(MIMEText(body, "html"))
 
         with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
@@ -460,7 +442,6 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         players = await fpl.get_players()
         player_data = []
 
-        # Calculate total fixture difficulty per team
         team_fdr = {}
         for team_id, fixtures in team_fixtures.items():
             fdr_sum = sum(
@@ -468,14 +449,8 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
             )
             team_fdr[team_id] = fdr_sum
 
-        # Sort teams by easiest fixtures
         easiest_teams = sorted(team_fdr, key=team_fdr.get)
 
-        # Log fixture difficulties for debugging
-        logger.debug(f"Fixture Difficulties by Team: {team_fdr}")
-        logger.debug(f"Easiest Teams: {easiest_teams}")
-
-        # Collect player data and annotate with team FDR
         for player in players:
             data = await fetch_player_data(fpl, player, team_fixtures)
             if data:
@@ -488,7 +463,6 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
             logger.warning("⚠️ No valid players found for Free Hit team.")
             return df
 
-        # Ensure numeric types
         df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
         df["form"] = pd.to_numeric(df["form"], errors="coerce")
         df["total_points"] = pd.to_numeric(df["total_points"], errors="coerce")
@@ -496,13 +470,11 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
         df["team_fdr"] = pd.to_numeric(df["team_fdr"], errors="coerce")
         df = df.dropna(subset=["now_cost", "form", "total_points", "fixture_difficulty", "team_fdr"])
 
-        # Sort players: prioritize easiest teams, form, total points, and fixture difficulty
         df = df.sort_values(
             by=["team_fdr", "form", "total_points", "fixture_difficulty"],
             ascending=[True, False, False, True]
         )
 
-        # Build balanced squad
         squad = []
         positions = {
             "Goalkeeper": 2,
@@ -534,11 +506,124 @@ async def suggest_free_hit_team(fpl, team_fixtures, budget=100.0):
             logger.info(f"✅ Free Hit squad selected with total cost £{squad_df['now_cost'].sum()}m")
 
         return squad_df
-
     except Exception as e:
         logger.error(f"❌ Error suggesting Free Hit team: {e}")
         raise
 
+async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
+    """Suggest a balanced Double Gameweek team within budget, considering FPL rules."""
+    try:
+        players = await fpl.get_players()
+        player_data = []
+
+        dgw_teams = []
+        for team_id, fixtures in team_fixtures.items():
+            upcoming_gws = [gw for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD)]
+            gw_count = sum(1 for gw in upcoming_gws if gw in fixtures)
+            if gw_count >= 2:
+                dgw_teams.append(team_id)
+
+        if not dgw_teams:
+            logger.warning("⚠️ No Double Gameweek teams found.")
+            return pd.DataFrame()
+
+        for player in players:
+            if player.team in dgw_teams:
+                data = await fetch_player_data(fpl, player, team_fixtures)
+                if data:
+                    player_data.append(data)
+
+        df = pd.DataFrame(player_data)
+
+        if df.empty:
+            logger.warning("⚠️ No valid DGW players found.")
+            return df
+
+        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
+        df["form"] = pd.to_numeric(df["form"], errors="coerce")
+        df["total_points"] = pd.to_numeric(df["total_points"], errors="coerce")
+        df = df.dropna(subset=["now_cost", "form", "total_points"])
+
+        df = df.sort_values(by=["form", "total_points"], ascending=[False, False])
+
+        squad = []
+        positions = {
+            "Goalkeeper": 2,
+            "Defender": 5,
+            "Midfielder": 5,
+            "Forward": 3
+        }
+        team_count = {}
+
+        for position, count_needed in positions.items():
+            position_players = df[df["position"] == position]
+
+            for _, player in position_players.iterrows():
+                if count_needed == 0:
+                    break
+                if player["now_cost"] + sum(p["now_cost"] for p in squad) > budget:
+                    continue
+                if team_count.get(player["team"], 0) >= 3:
+                    continue
+                squad.append(player)
+                team_count[player["team"]] = team_count.get(player["team"], 0) + 1
+                count_needed -= 1
+
+        squad_df = pd.DataFrame(squad)
+
+        if squad_df.empty:
+            logger.warning("⚠️ No valid DGW squad could be formed within budget.")
+        else:
+            logger.info(f"✅ DGW squad selected with total cost £{squad_df['now_cost'].sum()}m")
+
+        return squad_df
+    except Exception as e:
+        logger.error(f"❌ Error suggesting DGW team: {e}")
+        raise
+
+async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_transfers=1):
+    """Suggest the best transfers for the upcoming gameweeks, considering budget and free transfers."""
+    try:
+        my_players = [await fpl.get_player(p["element"]) for p in user_team]
+        my_team_cost = sum(player.now_cost / 10 for player in my_players)
+
+        players = await fpl.get_players()
+        player_data = []
+
+        for player in players:
+            data = await fetch_player_data(fpl, player, team_fixtures)
+            if data:
+                player_data.append(data)
+
+        df = pd.DataFrame(player_data)
+
+        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
+        df["form"] = pd.to_numeric(df["form"], errors="coerce")
+        df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
+        df = df.dropna(subset=["now_cost", "form", "fixture_difficulty"])
+
+        best_players = df.sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True])
+
+        transfers = []
+        for player in my_players:
+            replacement = best_players[
+                (best_players["now_cost"] <= (my_team_cost + budget)) &
+                (best_players["form"] > float(player.form)) &
+                (best_players["total_points"] > player.total_points) &
+                (best_players["fixture_difficulty"] < await calculate_team_fdr(team_fixtures, player.team))
+            ].head(1)
+
+            if not replacement.empty:
+                transfers.append({
+                    "transfer_out": f"{player.first_name} {player.second_name}",
+                    "transfer_in": replacement.iloc[0]["full_name"],
+                    "cost": float(replacement.iloc[0]["now_cost"] - (player.now_cost / 10))
+                })
+
+        return transfers[:free_transfers]
+    except Exception as e:
+        logger.error(f"❌ Error suggesting transfers: {e}")
+        raise
 
 async def suggest_starting_xi(fpl, my_players, team_fixtures):
     """Suggest the optimal starting XI from your current squad with dynamic formation."""
@@ -605,136 +690,6 @@ async def suggest_starting_xi(fpl, my_players, team_fixtures):
         logger.error(f"❌ Error suggesting starting XI: {e}")
         raise
 
-async def suggest_dgw_team(fpl, team_fixtures, budget=100.0):
-    """Suggest a balanced Double Gameweek team within budget, considering FPL rules."""
-    try:
-        players = await fpl.get_players()
-        player_data = []
-
-        # Identify teams with double fixtures
-        dgw_teams = []
-        for team_id, fixtures in team_fixtures.items():
-            upcoming_gws = [gw for gw in range(CURRENT_GAMEWEEK, CURRENT_GAMEWEEK + FIXTURE_LOOKAHEAD)]
-            gw_count = sum(1 for gw in upcoming_gws if gw in fixtures)
-            if gw_count >= 2:
-                dgw_teams.append(team_id)
-
-        if not dgw_teams:
-            logger.warning("⚠️ No Double Gameweek teams found.")
-            return pd.DataFrame()
-
-        # Log DGW teams for debugging
-        logger.debug(f"Double Gameweek Teams: {dgw_teams}")
-
-        # Collect player data from DGW teams
-        for player in players:
-            if player.team in dgw_teams:
-                data = await fetch_player_data(fpl, player, team_fixtures)
-                if data:
-                    player_data.append(data)
-
-        df = pd.DataFrame(player_data)
-
-        if df.empty:
-            logger.warning("⚠️ No valid DGW players found.")
-            return df
-
-        # Ensure numeric types for safety
-        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
-        df["form"] = pd.to_numeric(df["form"], errors="coerce")
-        df["total_points"] = pd.to_numeric(df["total_points"], errors="coerce")
-        df = df.dropna(subset=["now_cost", "form", "total_points"])
-
-        # Sort by form and total points
-        df = df.sort_values(by=["form", "total_points"], ascending=[False, False])
-
-        # Build the squad
-        squad = []
-        positions = {
-            "Goalkeeper": 2,
-            "Defender": 5,
-            "Midfielder": 5,
-            "Forward": 3
-        }
-        team_count = {}
-
-        for position, count_needed in positions.items():
-            position_players = df[df["position"] == position]
-
-            for _, player in position_players.iterrows():
-                if count_needed == 0:
-                    break
-                if player["now_cost"] + sum(p["now_cost"] for p in squad) > budget:
-                    continue
-                if team_count.get(player["team"], 0) >= 3:
-                    continue
-                squad.append(player)
-                team_count[player["team"]] = team_count.get(player["team"], 0) + 1
-                count_needed -= 1
-
-        squad_df = pd.DataFrame(squad)
-
-        if squad_df.empty:
-            logger.warning("⚠️ No valid DGW squad could be formed within budget.")
-        else:
-            logger.info(f"✅ DGW squad selected with total cost £{squad_df['now_cost'].sum()}m")
-
-        return squad_df
-
-    except Exception as e:
-        logger.error(f"❌ Error suggesting DGW team: {e}")
-        raise
-
-async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_transfers=1):
-    """Suggest the best transfers for the upcoming gameweeks, considering budget and free transfers."""
-    try:
-        my_players = [await fpl.get_player(p["element"]) for p in user_team]
-        my_team_cost = sum(player.now_cost / 10 for player in my_players)
-
-        # Get all players
-        players = await fpl.get_players()
-        player_data = []
-
-        for player in players:
-            data = await fetch_player_data(fpl, player, team_fixtures)
-            if data:
-                player_data.append(data)
-
-        df = pd.DataFrame(player_data)
-
-        # Ensure correct data types
-        df["now_cost"] = pd.to_numeric(df["now_cost"], errors="coerce")
-        df["form"] = pd.to_numeric(df["form"], errors="coerce")
-        df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
-
-        # Drop rows with NaN values in critical columns
-        df = df.dropna(subset=["now_cost", "form", "fixture_difficulty"])
-
-        # Sort players by form, points, and FDR
-        best_players = df.sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True])
-
-        # Suggest transfers
-        transfers = []
-        for player in my_players:
-            # Find a better replacement within budget
-            replacement = best_players[
-                (best_players["now_cost"] <= (my_team_cost + budget)) &
-                (best_players["form"] > float(player.form)) &
-                (best_players["total_points"] > player.total_points) &  # Ensure replacement has more points
-                (best_players["fixture_difficulty"] < await calculate_team_fdr(team_fixtures, player.team))
-            ].head(1)
-
-            if not replacement.empty:
-                transfers.append({
-                    "transfer_out": f"{player.first_name} {player.second_name}",
-                    "transfer_in": replacement.iloc[0]["full_name"],
-                    "cost": float(replacement.iloc[0]["now_cost"] - (player.now_cost / 10))  # Convert to float
-                })
-
-        return transfers[:free_transfers]  # Limit to the number of free transfers
-    except Exception as e:
-        logger.error(f"❌ Error suggesting transfers: {e}")
-        raise
 
 async def track_injuries(fpl, user_team):
     """Track injuries and suspensions in your team and suggest replacements."""
@@ -742,7 +697,7 @@ async def track_injuries(fpl, user_team):
         injured_players = []
         for player in user_team:
             player_data = await fpl.get_player(player["element"])
-            if player_data.status != "a":  # Player is not available
+            if player_data.status != "a":
                 injured_players.append({
                     "name": f"{player_data.first_name} {player_data.second_name}",
                     "status": player_data.status
@@ -754,42 +709,19 @@ async def track_injuries(fpl, user_team):
         logger.error(f"❌ Error tracking injuries: {e}")
         raise
 
-async def predict_points(fpl, player, team_fixtures):
-    """Predict points for a player based on form, fixture difficulty, and historical performance."""
-    try:
-        fdr = await calculate_team_fdr(team_fixtures, player.team)
-        predicted_points = (float(player.form) * 2) + ((6 - fdr) * 1.5)  # Example formula
-        return predicted_points
-    except Exception as e:
-        logger.error(f"❌ Error predicting points: {e}")
-        raise
-
 async def track_team_value(fpl, user_team):
     """Track your team's value and suggest ways to increase it through transfers."""
     try:
         team_value = 0.0
         for player in user_team:
             player_id = player["element"]
-            player_data = await fpl.get_player(player_id)  # Fetch player data from FPL API
-            team_value += player_data.now_cost / 10  # Add player's cost to team value
+            player_data = await fpl.get_player(player_id)
+            team_value += player_data.now_cost / 10
 
         return f"Your team's current value is {team_value:.1f} million."
     except Exception as e:
         logger.error(f"❌ Error tracking team value: {e}")
         raise
-
-
-
-async def analyze_historical_performance(fpl, player_id):
-    """Analyze historical performance data for a player."""
-    try:
-        player = await fpl.get_player(player_id)
-        history = player.history
-        return history
-    except Exception as e:
-        logger.error(f"❌ Error analyzing historical performance: {e}")
-        raise
-
 
 async def main():
     """Main function to run the FPL assistant."""
