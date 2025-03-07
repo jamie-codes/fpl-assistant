@@ -74,12 +74,11 @@ async def load_cookies():
         raise
 
 async def fetch_historical_data(fpl, gameweek):
-    """Fetch historical player data for a specific gameweek."""
     try:
         players = await fpl.get_players()
         historical_data = []
         for player in players:
-            history = await player.get_history()
+            history = await player.get_history_data()  # Updated method name
             for entry in history:
                 if entry["round"] == gameweek:
                     historical_data.append({
