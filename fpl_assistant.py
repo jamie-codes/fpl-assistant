@@ -871,6 +871,7 @@ async def main():
             </style>
             </head>
             <body>
+                <h2>GAMEWEEK: {CURRENT_GAMEWEEK}</h2>
                 <h2>🌟 Starting XI</h2>
                 {starting_xi_html}
                 <h2>🌟 Bench</h2>
