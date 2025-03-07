@@ -905,7 +905,6 @@ async def main():
             global CURRENT_GAMEWEEK
             CURRENT_GAMEWEEK = await get_current_gameweek(fpl)
             logger.info("✅ Logged in using full browser cookies!")
-
             user = await fpl.get_user(TEAM_ID)
             user_team = await user.get_team()
             logger.debug(f"User team structure: {user_team}")
@@ -944,6 +943,11 @@ async def main():
                 logger.info("Captain: %s", captain.iloc[0]['full_name'])
             else:
                 logger.warning("⚠️ No valid captain data found.")
+
+            if not vice_captain.empty:
+                logger.info("Vice-Captain: %s", vice_captain.iloc[0]['full_name'])
+            else:
+                logger.warning("⚠️ No valid vice-captain data found.")
 
             if not vice_captain.empty:
                 logger.info("Vice-Captain: %s", vice_captain.iloc[0]['full_name'])
@@ -1011,6 +1015,7 @@ async def main():
             bench_html = build_html_table(bench.to_dict('records')) if bench is not None else "<p>No bench data available.</p>"
 
             # Create the email body with HTML formatting
+            # Create the email body with HTML formatting
             email_body = f"""
                 <h2>🌟 Starting XI</h2>
                 {starting_xi_html}
@@ -1023,14 +1028,28 @@ async def main():
                 <h2>🎖 Captaincy Recommendations</h2>
             """
 
-            # Check if captain and vice_captain are valid
-            if not captain.empty and not vice_captain.empty:
+            # Captain section
+            if not captain.empty and 'team' in captain.columns and 'full_name' in captain.columns:
                 email_body += f"""
-                    <p><strong>Captain:</strong> {captain.iloc[0]['full_name']} (Team: {captain.iloc[0]['team']}, Form: {captain.iloc[0]['form']}, FDR: {captain.iloc[0]['fixture_difficulty']})</p>
-                    <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0]['full_name']} (Team: {vice_captain.iloc[0]['team']}, Form: {vice_captain.iloc[0]['form']}, FDR: {vice_captain.iloc[0]['fixture_difficulty']})</p>
+                    <p><strong>Captain:</strong> {captain.iloc[0].get('full_name', 'Unknown')} 
+                    (Team: {get_team_name(captain.iloc[0].get('team', 0))}, 
+                    Form: {captain.iloc[0].get('form', 'N/A')}, 
+                    FDR: {captain.iloc[0].get('fixture_difficulty', 'N/A')})</p>
                 """
             else:
-                email_body += "<p>No valid captain or vice-captain data found.</p>"
+                email_body += "<p><strong>Captain:</strong> No valid captain data available.</p>"
+
+            # Vice-Captain section
+            if not vice_captain.empty and 'team' in vice_captain.columns and 'full_name' in vice_captain.columns:
+                email_body += f"""
+                    <p><strong>Vice-Captain:</strong> {vice_captain.iloc[0].get('full_name', 'Unknown')} 
+                    (Team: {get_team_name(vice_captain.iloc[0].get('team', 0))}, 
+                    Form: {vice_captain.iloc[0].get('form', 'N/A')}, 
+                    FDR: {vice_captain.iloc[0].get('fixture_difficulty', 'N/A')})</p>
+                """
+            else:
+                email_body += "<p><strong>Vice-Captain:</strong> No valid vice-captain data available.</p>"
+
 
             # Add the rest of the email body
             email_body += f"""
