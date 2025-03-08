@@ -10,7 +10,7 @@ import pandas as pd
 from fpl import FPL
 import aiohttp
 from dotenv import load_dotenv
-from backtester import compare_strategies, generate_graphs, export_results
+from backtester.backtester import compare_strategies, generate_graphs, export_results
 
 # Configuration
 TEAM_ID = 6378398
