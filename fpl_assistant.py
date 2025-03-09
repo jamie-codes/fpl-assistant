@@ -50,6 +50,44 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Team Logo URLs
+TEAM_LOGO_URLS = {
+    1: "https://resources.premierleague.com/premierleague/badges/25/t1.png",  # Arsenal
+    2: "https://resources.premierleague.com/premierleague/badges/25/t2.png",  # Aston Villa
+    3: "https://resources.premierleague.com/premierleague/badges/25/t3.png",  # Brentford
+    4: "https://resources.premierleague.com/premierleague/badges/25/t4.png",  # Brighton
+    5: "https://resources.premierleague.com/premierleague/badges/25/t5.png",  # Burnley
+    6: "https://resources.premierleague.com/premierleague/badges/25/t6.png",  # Chelsea
+    7: "https://resources.premierleague.com/premierleague/badges/25/t7.png",  # Crystal Palace
+    8: "https://resources.premierleague.com/premierleague/badges/25/t8.png",  # Everton
+    9: "https://resources.premierleague.com/premierleague/badges/25/t9.png",  # Leicester
+    10: "https://resources.premierleague.com/premierleague/badges/25/t10.png",  # Leeds
+    11: "https://resources.premierleague.com/premierleague/badges/25/t11.png",  # Liverpool
+    12: "https://resources.premierleague.com/premierleague/badges/25/t12.png",  # Man City
+    13: "https://resources.premierleague.com/premierleague/badges/25/t13.png",  # Man Utd
+    14: "https://resources.premierleague.com/premierleague/badges/25/t14.png",  # Newcastle
+    15: "https://resources.premierleague.com/premierleague/badges/25/t15.png",  # Norwich
+    16: "https://resources.premierleague.com/premierleague/badges/25/t16.png",  # Southampton
+    17: "https://resources.premierleague.com/premierleague/badges/25/t17.png",  # Spurs
+    18: "https://resources.premierleague.com/premierleague/badges/25/t18.png",  # Watford
+    19: "https://resources.premierleague.com/premierleague/badges/25/t19.png",  # West Ham
+    20: "https://resources.premierleague.com/premierleague/badges/25/t20.png",  # Wolves
+}
+
+# Player Photo Placeholder
+PLAYER_PLACEHOLDER_URL = "https://via.placeholder.com/110x140?text=Player+Photo"
+
+async def get_image_url(url, fallback_url):
+    """Check if the image URL is valid, otherwise return the fallback URL."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return url
+    except Exception as e:
+        logger.error(f"❌ Error loading image: {e}")
+    return fallback_url
+
 def load_cookies():
     """Load cookies from cookies.json."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -117,7 +155,10 @@ async def calculate_team_fdr(team_fixtures, team_id):
         upcoming_fdrs.append(capped_fdr)
     return sum(upcoming_fdrs)
 
+
+
 async def fetch_player_data(fpl, player, team_fixtures):
+    """Fetch and format player data."""
     try:
         # Check if player object is valid and has required attributes
         if not player or not hasattr(player, 'team') or not hasattr(player, 'element_type'):
@@ -144,25 +185,19 @@ async def fetch_player_data(fpl, player, team_fixtures):
         # Calculate Value for Money (VFM)
         vfm = round(total_points / now_cost, 2) if now_cost > 0 else 0.0
 
-        # Fetch team logo and player photo URLs (handle missing fields)
-        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png"
-        # Verify if the URL is accessible, if not use a fallback
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(team_logo_url) as response:
-                    if response.status != 200:
-                        team_logo_url = "https://via.placeholder.com/30"
-        except Exception as e:
-            logger.error(f"❌ Error verifying team logo URL: {e}")
-            team_logo_url = "https://via.placeholder.com/30"
+        # Fetch team logo URL
+        team_logo_url = TEAM_LOGO_URLS.get(player.team, "https://via.placeholder.com/40x40?text=Logo")
+        team_logo_url = await get_image_url(team_logo_url, "https://via.placeholder.com/40x40?text=Logo")
 
-        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png" if hasattr(player, 'code') and player.code else "https://via.placeholder.com/50"
+        # Fetch player photo URL
+        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png"
+        player_photo_url = await get_image_url(player_photo_url, PLAYER_PLACEHOLDER_URL)
 
         return {
             "full_name": f"{player.first_name} {player.second_name}",
             "team": player.team,
-            "team_logo": team_logo_url,  # Add team logo URL
-            "player_photo": player_photo_url,  # Add player photo URL
+            "team_logo": team_logo_url,
+            "player_photo": player_photo_url,
             "position": position,
             "form": form,
             "total_points": total_points,
@@ -265,7 +300,7 @@ async def suggest_best_players(fpl, team_fixtures, top_n=10):
 
         for player in players:
             try:
-                logger.debug(f"Fetching data for player: {player.first_name} {player.second_name}")
+                #logger.debug(f"Fetching data for player: {player.first_name} {player.second_name}")
                 data = await fetch_player_data(fpl, player, team_fixtures)
                 if data:
                     player_data.append(data)
@@ -1057,7 +1092,8 @@ async def main():
 
             # Run the backtester and get results
             logger.info("\n🌟 Running Backtester for Strategy Comparison:")
-            backtest_results = await compare_strategies(fpl, range(1, CURRENT_GAMEWEEK))
+            data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "2022-23")
+            backtest_results = await compare_strategies(range(1, CURRENT_GAMEWEEK), data_dir)
             await generate_graphs(backtest_results)
             await export_results(backtest_results)
 

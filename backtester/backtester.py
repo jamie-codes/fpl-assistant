@@ -8,6 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
+import plotly.express as px
 from fpl import FPL
 import aiohttp
 from dotenv import load_dotenv
@@ -59,6 +60,21 @@ BACKTEST_CONFIG = {
     "email_notifications": True
 }
 
+async def generate_graphs(results):
+    """Generate interactive graphs comparing strategy performance."""
+    # Create a DataFrame for the results
+    df = pd.DataFrame(results).T
+    df.reset_index(inplace=True)
+    df.rename(columns={"index": "Strategy"}, inplace=True)
+
+    # Plot strategy performance
+    fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
+    fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
+    fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+
+    logger.info("📊 Generated interactive graphs for strategy comparison.")
+
+
 async def load_cookies():
     """Load cookies from cookies.json."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -72,7 +88,6 @@ async def load_cookies():
     except json.JSONDecodeError:
         logger.error("❌ cookies.json is not a valid JSON file.")
         raise
-
 
 async def fetch_historical_data(gameweek, data_dir):
     """
@@ -138,28 +153,17 @@ async def simulate_strategy(strategy_name, gameweeks, data_dir):
 
     return total_points, points_per_gameweek
 
-async def compare_strategies(fpl, gameweeks):
+async def compare_strategies(gameweeks, data_dir):
     """Compare the performance of all strategies."""
     results = {}
     for strategy_name in STRATEGIES:
-        total_points, points_per_gameweek = await simulate_strategy(fpl, strategy_name, gameweeks)
+        total_points, points_per_gameweek = await simulate_strategy(strategy_name, gameweeks, data_dir)
         results[strategy_name] = {
             "total_points": total_points,
             "points_per_gameweek": points_per_gameweek
         }
     return results
 
-async def generate_graphs(results):
-    """Generate graphs comparing strategy performance."""
-    plt.figure(figsize=(10, 6))
-    for strategy_name, data in results.items():
-        plt.plot(data["points_per_gameweek"], label=strategy_name)
-    plt.xlabel("Gameweek")
-    plt.ylabel("Points")
-    plt.title("Strategy Performance Comparison")
-    plt.legend()
-    plt.savefig(f"{OUTPUT_DIR}/strategy_comparison.png")
-    plt.close()
 
 async def export_results(results):
     """Export the results of the backtest to CSV and Excel."""
@@ -210,19 +214,14 @@ async def main():
     """Main function to run the FPL backtester."""
     try:
         # Path to the historical data directory
-        data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "2022-23")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(base_dir, "data")
 
         # Define the range of gameweeks to backtest
         gameweeks = range(1, 39)  # Example: Backtest the entire season
 
         # Compare strategies
-        results = {}
-        for strategy_name in STRATEGIES:
-            total_points, points_per_gameweek = await simulate_strategy(strategy_name, gameweeks, data_dir)
-            results[strategy_name] = {
-                "total_points": total_points,
-                "points_per_gameweek": points_per_gameweek
-            }
+        results = await compare_strategies(gameweeks, data_dir)
 
         # Generate graphs
         await generate_graphs(results)
