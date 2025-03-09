@@ -126,10 +126,15 @@ async def fetch_historical_data(gameweek, data_dir):
                         team_id = player_history["team"].values[0] if "team" in player_history.columns else None
                         team_name = teams_df[teams_df["id"] == team_id]["name"].values[0] if team_id else "Unknown Team"
 
+                        # Map element_type to position (1: GK, 2: DEF, 3: MID, 4: FWD)
+                        element_type = player_history["element_type"].values[0] if "element_type" in player_history.columns else None
+                        position_map = {1: "Goalkeeper", 2: "Defender", 3: "Midfielder", 4: "Forward"}
+                        position = position_map.get(element_type, "Unknown")
+
                         gameweek_data.append({
                             "player_id": player_id,  # Player ID extracted from folder name
                             "team": team_name,  # Team name from teams.csv
-                            "position": player_history["element_type"].values[0],
+                            "position": position,  # Player position mapped from element_type
                             "total_points": player_history["total_points"].values[0],
                             "form": player_history["form"].values[0],
                             "minutes": player_history["minutes"].values[0],
