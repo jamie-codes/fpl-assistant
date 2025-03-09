@@ -97,6 +97,14 @@ async def fetch_historical_data(gameweek, data_dir):
         gameweek_data = []
         players_dir = os.path.join(data_dir, "players")
 
+        # Load team data from teams.csv
+        teams_path = os.path.join(data_dir, "teams.csv")
+        if os.path.exists(teams_path):
+            teams_df = pd.read_csv(teams_path)
+        else:
+            logger.error("❌ teams.csv file not found. Please ensure it exists.")
+            raise FileNotFoundError("teams.csv file not found.")
+
         # Iterate through each player's folder
         for player_folder in os.listdir(players_dir):
             player_path = os.path.join(players_dir, player_folder)
@@ -108,9 +116,13 @@ async def fetch_historical_data(gameweek, data_dir):
                     player_history = player_history[player_history["round"] == gameweek]
                     if not player_history.empty:
                         # Extract relevant data for the gameweek
+                        player_id = int(player_folder)  # Player ID is the folder name
+                        team_id = player_history["team"].values[0] if "team" in player_history.columns else None
+                        team_name = teams_df[teams_df["id"] == team_id]["name"].values[0] if team_id else "Unknown Team"
+
                         gameweek_data.append({
-                            "player_id": player_folder,  # Player ID is the folder name
-                            "team": player_history["team"].values[0],
+                            "player_id": player_id,  # Player ID is the folder name
+                            "team": team_name,  # Team name from teams.csv
                             "position": player_history["element_type"].values[0],
                             "total_points": player_history["total_points"].values[0],
                             "form": player_history["form"].values[0],
