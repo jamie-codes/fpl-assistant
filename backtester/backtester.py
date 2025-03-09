@@ -109,6 +109,13 @@ async def fetch_historical_data(gameweek, data_dir):
         for player_folder in os.listdir(players_dir):
             player_path = os.path.join(players_dir, player_folder)
             if os.path.isdir(player_path):
+                # Extract player ID from the folder name (e.g., "Aaron_Cresswell_457" -> 457)
+                try:
+                    player_id = int(player_folder.split("_")[-1])  # Extract the last part of the folder name
+                except (IndexError, ValueError) as e:
+                    logger.warning(f"⚠️ Could not extract player ID from folder name: {player_folder}")
+                    continue
+
                 # Load the player's gameweek data
                 gw_path = os.path.join(player_path, "gw.csv")
                 if os.path.exists(gw_path):
@@ -116,12 +123,11 @@ async def fetch_historical_data(gameweek, data_dir):
                     player_history = player_history[player_history["round"] == gameweek]
                     if not player_history.empty:
                         # Extract relevant data for the gameweek
-                        player_id = int(player_folder)  # Player ID is the folder name
                         team_id = player_history["team"].values[0] if "team" in player_history.columns else None
                         team_name = teams_df[teams_df["id"] == team_id]["name"].values[0] if team_id else "Unknown Team"
 
                         gameweek_data.append({
-                            "player_id": player_id,  # Player ID is the folder name
+                            "player_id": player_id,  # Player ID extracted from folder name
                             "team": team_name,  # Team name from teams.csv
                             "position": player_history["element_type"].values[0],
                             "total_points": player_history["total_points"].values[0],
@@ -165,6 +171,7 @@ async def simulate_strategy(strategy_name, gameweeks, data_dir):
         points_per_gameweek.append(squad["total_points"].sum())
 
     return total_points, points_per_gameweek
+
 
 async def compare_strategies(gameweeks, data_dir):
     """Compare the performance of all strategies."""
