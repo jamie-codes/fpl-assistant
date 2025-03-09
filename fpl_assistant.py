@@ -50,44 +50,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Team Logo URLs
-TEAM_LOGO_URLS = {
-    1: "https://resources.premierleague.com/premierleague/badges/25/t1.png",  # Arsenal
-    2: "https://resources.premierleague.com/premierleague/badges/25/t2.png",  # Aston Villa
-    3: "https://resources.premierleague.com/premierleague/badges/25/t3.png",  # Brentford
-    4: "https://resources.premierleague.com/premierleague/badges/25/t4.png",  # Brighton
-    5: "https://resources.premierleague.com/premierleague/badges/25/t5.png",  # Burnley
-    6: "https://resources.premierleague.com/premierleague/badges/25/t6.png",  # Chelsea
-    7: "https://resources.premierleague.com/premierleague/badges/25/t7.png",  # Crystal Palace
-    8: "https://resources.premierleague.com/premierleague/badges/25/t8.png",  # Everton
-    9: "https://resources.premierleague.com/premierleague/badges/25/t9.png",  # Leicester
-    10: "https://resources.premierleague.com/premierleague/badges/25/t10.png",  # Leeds
-    11: "https://resources.premierleague.com/premierleague/badges/25/t11.png",  # Liverpool
-    12: "https://resources.premierleague.com/premierleague/badges/25/t12.png",  # Man City
-    13: "https://resources.premierleague.com/premierleague/badges/25/t13.png",  # Man Utd
-    14: "https://resources.premierleague.com/premierleague/badges/25/t14.png",  # Newcastle
-    15: "https://resources.premierleague.com/premierleague/badges/25/t15.png",  # Norwich
-    16: "https://resources.premierleague.com/premierleague/badges/25/t16.png",  # Southampton
-    17: "https://resources.premierleague.com/premierleague/badges/25/t17.png",  # Spurs
-    18: "https://resources.premierleague.com/premierleague/badges/25/t18.png",  # Watford
-    19: "https://resources.premierleague.com/premierleague/badges/25/t19.png",  # West Ham
-    20: "https://resources.premierleague.com/premierleague/badges/25/t20.png",  # Wolves
-}
-
-# Player Photo Placeholder
-PLAYER_PLACEHOLDER_URL = "https://via.placeholder.com/110x140?text=Player+Photo"
-
-async def get_image_url(url, fallback_url):
-    """Check if the image URL is valid, otherwise return the fallback URL."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    return url
-    except Exception as e:
-        logger.error(f"❌ Error loading image: {e}")
-    return fallback_url
-
 def load_cookies():
     """Load cookies from cookies.json."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -155,10 +117,7 @@ async def calculate_team_fdr(team_fixtures, team_id):
         upcoming_fdrs.append(capped_fdr)
     return sum(upcoming_fdrs)
 
-
-
 async def fetch_player_data(fpl, player, team_fixtures):
-    """Fetch and format player data."""
     try:
         # Check if player object is valid and has required attributes
         if not player or not hasattr(player, 'team') or not hasattr(player, 'element_type'):
@@ -185,19 +144,25 @@ async def fetch_player_data(fpl, player, team_fixtures):
         # Calculate Value for Money (VFM)
         vfm = round(total_points / now_cost, 2) if now_cost > 0 else 0.0
 
-        # Fetch team logo URL
-        team_logo_url = TEAM_LOGO_URLS.get(player.team, "https://via.placeholder.com/40x40?text=Logo")
-        team_logo_url = await get_image_url(team_logo_url, "https://via.placeholder.com/40x40?text=Logo")
+        # Fetch team logo and player photo URLs (handle missing fields)
+        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png"
+        # Verify if the URL is accessible, if not use a fallback
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(team_logo_url) as response:
+                    if response.status != 200:
+                        team_logo_url = "https://via.placeholder.com/30"
+        except Exception as e:
+            logger.error(f"❌ Error verifying team logo URL: {e}")
+            team_logo_url = "https://via.placeholder.com/30"
 
-        # Fetch player photo URL
-        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png"
-        player_photo_url = await get_image_url(player_photo_url, PLAYER_PLACEHOLDER_URL)
+        player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png" if hasattr(player, 'code') and player.code else "https://via.placeholder.com/50"
 
         return {
             "full_name": f"{player.first_name} {player.second_name}",
             "team": player.team,
-            "team_logo": team_logo_url,
-            "player_photo": player_photo_url,
+            "team_logo": team_logo_url,  # Add team logo URL
+            "player_photo": player_photo_url,  # Add player photo URL
             "position": position,
             "form": form,
             "total_points": total_points,
@@ -597,79 +562,37 @@ async def send_email(subject, body):
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
 
-        # Attach the HTML body with improved styling and gameweek title
-        email_body = f"""
-        <html>
-        <head>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    background-color: #f9f9f9;
-                    padding: 20px;
-                    color: #333333;
-                }}
-                .email-container {{
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background-color: #ffffff;
-                    padding: 20px;
-                    border-radius: 10px;
-                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-                }}
-                h1 {{
-                    text-align: center;
-                    color: #0044cc;
-                    margin-bottom: 20px;
-                }}
-                h2 {{
-                    background-color: #0044cc;
-                    color: #ffffff;
-                    padding: 10px;
-                    border-radius: 5px;
-                    text-align: center;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                }}
-                th, td {{
-                    padding: 10px;
-                    text-align: center;
-                    border: 1px solid #dddddd;
-                }}
-                th {{
-                    background-color: #007bff;
-                    color: #ffffff;
-                }}
-                tr:nth-child(even) {{
-                    background-color: #f2f2f2;
-                }}
-                tr:hover {{
-                    background-color: #e6f7ff;
-                }}
-                img {{
-                    vertical-align: middle;
-                }}
-                .footer {{
-                    text-align: center;
-                    margin-top: 20px;
-                    font-size: 12px;
-                    color: #777777;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="email-container">
-                <h1>FPL Assistant - Gameweek {CURRENT_GAMEWEEK}</h1>
-                {body}
-                <div class="footer">
-                    <p>This email was generated by the FPL Assistant. Please do not reply to this email.</p>
-                </div>
-            </div>
-        </body>
-        </html>
+        # Load the email template
+        email_template = load_email_template()
+
+        # Replace placeholders with actual data
+        email_body = email_template.replace("{CURRENT_GAMEWEEK}", str(CURRENT_GAMEWEEK))
+        email_body = email_body.replace("{CAPTAIN_NAME}", captain.iloc[0]['full_name'])
+        email_body = email_body.replace("{CAPTAIN_TEAM}", get_team_name(captain.iloc[0]['team']))
+        email_body = email_body.replace("{CAPTAIN_FORM}", str(captain.iloc[0]['form']))
+        email_body = email_body.replace("{CAPTAIN_FDR}", str(captain.iloc[0]['fixture_difficulty']))
+        email_body = email_body.replace("{VICE_CAPTAIN_NAME}", vice_captain.iloc[0]['full_name'])
+        email_body = email_body.replace("{VICE_CAPTAIN_TEAM}", get_team_name(vice_captain.iloc[0]['team']))
+        email_body = email_body.replace("{VICE_CAPTAIN_FORM}", str(vice_captain.iloc[0]['form']))
+        email_body = email_body.replace("{VICE_CAPTAIN_FDR}", str(vice_captain.iloc[0]['fixture_difficulty']))
+        email_body = email_body.replace("{TRANSFER_SUGGESTIONS}", str(transfer_suggestions))
+        email_body = email_body.replace("{CHIP_SUGGESTIONS}", str(chip_suggestions))
+        email_body = email_body.replace("{BEST_PLAYERS_TABLE}", build_html_table(best_players.to_dict('records')))
+        email_body = email_body.replace("{TRANSFERS_OUT_TABLE}", build_html_table(transfers_out.to_dict('records')))
+        email_body = email_body.replace("{FREE_HIT_TEAM_TABLE}", build_html_table(free_hit_team.to_dict('records')))
+        email_body = email_body.replace("{DGW_TEAM_TABLE}", build_html_table(dgw_team.to_dict('records')))
+        email_body = email_body.replace("{MINI_LEAGUE_INSIGHTS_TABLE}", "<p>No mini-league data available.</p>")
+
+        # Add explanations for metrics at the top of the email
+        explanations = """
+        <h2>ℹ️ Explanation of Metrics</h2>
+        <ul>
+            <li><strong>VFM (Value for Money):</strong> Total points per million spent. 💰 <em>Higher is better</em>.</li>
+            <li><strong>Form:</strong> A player's recent performance, calculated over the last 30 days. 📈 <em>Higher is better</em>.</li>
+            <li><strong>Fixture Difficulty Rating (FDR):</strong> Measures the difficulty of upcoming fixtures. ⚠️ <em>Lower is better</em>.</li>
+        </ul>
         """
+        email_body = email_body.replace("<!-- Summary Section -->", explanations + "<!-- Summary Section -->")
 
         msg.attach(MIMEText(email_body, "html"))
 
@@ -970,6 +893,15 @@ async def track_team_value(fpl, user_team):
         logger.error(f"❌ Error tracking team value: {e}")
         raise
 
+def load_email_template():
+    """Load the email template from email_template.html."""
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "email_template.html")
+    try:
+        with open(template_path, "r", encoding="utf-8") as file:
+            return file.read()
+    except FileNotFoundError:
+        logger.error("❌ email_template.html file not found. Please ensure it exists.")
+        raise
 
 async def main():
     """Main function to run the FPL assistant."""

@@ -91,33 +91,34 @@ async def load_cookies():
 
 async def fetch_historical_data(gameweek, data_dir):
     """
-    Fetch historical player data for a specific gameweek from CSV files.
+    Fetch historical player data for a specific gameweek from the players folder.
     """
     try:
-        # Load player data
-        players_df = pd.read_csv(os.path.join(data_dir, "players.csv"))
-
-        # Load gameweek data
         gameweek_data = []
-        for player_id in players_df["id"]:
-            player_history_path = os.path.join(data_dir, "players", f"{player_id}", "gw.csv")
-            if os.path.exists(player_history_path):
-                player_history = pd.read_csv(player_history_path)
-                player_history = player_history[player_history["round"] == gameweek]
-                if not player_history.empty:
-                    player_info = players_df[players_df["id"] == player_id].iloc[0]
-                    gameweek_data.append({
-                        "player_id": player_id,
-                        "name": f"{player_info['first_name']} {player_info['second_name']}",
-                        "team": player_info["team"],
-                        "position": player_info["element_type"],
-                        "total_points": player_history["total_points"].values[0],
-                        "form": player_history["form"].values[0],
-                        "minutes": player_history["minutes"].values[0],
-                        "fixture_difficulty": player_history["fixture_difficulty"].values[0],
-                        "opponent": player_history["opponent_team"].values[0],
-                        "ownership": player_history["selected_by_percent"].values[0]
-                    })
+        players_dir = os.path.join(data_dir, "players")
+
+        # Iterate through each player's folder
+        for player_folder in os.listdir(players_dir):
+            player_path = os.path.join(players_dir, player_folder)
+            if os.path.isdir(player_path):
+                # Load the player's gameweek data
+                gw_path = os.path.join(player_path, "gw.csv")
+                if os.path.exists(gw_path):
+                    player_history = pd.read_csv(gw_path)
+                    player_history = player_history[player_history["round"] == gameweek]
+                    if not player_history.empty:
+                        # Extract relevant data for the gameweek
+                        gameweek_data.append({
+                            "player_id": player_folder,  # Player ID is the folder name
+                            "team": player_history["team"].values[0],
+                            "position": player_history["element_type"].values[0],
+                            "total_points": player_history["total_points"].values[0],
+                            "form": player_history["form"].values[0],
+                            "minutes": player_history["minutes"].values[0],
+                            "fixture_difficulty": player_history["fixture_difficulty"].values[0],
+                            "opponent": player_history["opponent_team"].values[0],
+                            "ownership": player_history["selected_by_percent"].values[0]
+                        })
 
         return gameweek_data
     except Exception as e:
@@ -215,7 +216,7 @@ async def main():
     try:
         # Path to the historical data directory
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        data_dir = os.path.join(base_dir, "data")
+        data_dir = os.path.join(base_dir, "data", "2022-23")  # Adjust the season folder as needed
 
         # Define the range of gameweeks to backtest
         gameweeks = range(1, 39)  # Example: Backtest the entire season
