@@ -75,9 +75,6 @@ async def generate_graphs(results):
     logger.info("📊 Generated interactive graphs for strategy comparison.")
 
 async def fetch_historical_data(gameweek, data_dir):
-    """
-    Fetch historical player data for a specific gameweek from the players folder.
-    """
     try:
         gameweek_data = []
         players_dir = os.path.join(data_dir, "players")
@@ -102,9 +99,8 @@ async def fetch_historical_data(gameweek, data_dir):
         for player_folder in os.listdir(players_dir):
             player_path = os.path.join(players_dir, player_folder)
             if os.path.isdir(player_path):
-                # Extract player ID from the folder name (e.g., "Aaron_Cresswell_457" -> 457)
                 try:
-                    player_id = int(player_folder.split("_")[-1])  # Extract the last part of the folder name
+                    player_id = int(player_folder.split("_")[-1])  # Extract player ID from folder name
                 except (IndexError, ValueError) as e:
                     logger.warning(f"⚠️ Could not extract player ID from folder name: {player_folder}")
                     continue
@@ -130,15 +126,17 @@ async def fetch_historical_data(gameweek, data_dir):
                             position = "Unknown"
                             now_cost = 0.0
 
-                        # Calculate form manually (e.g., average points over the last 3 gameweeks)
+                        # Calculate form manually (average points over the last 3 gameweeks)
                         form = 0.0  # Default form value
                         try:
+                            # Get the last 3 gameweeks' data for the player
                             last_3_gws = player_history[player_history["round"].isin(range(gameweek - 3, gameweek))]
-                            form = last_3_gws["total_points"].mean() if not last_3_gws.empty else 0.0
+                            if not last_3_gws.empty:
+                                form = last_3_gws["total_points"].mean()
                         except Exception as e:
                             logger.warning(f"⚠️ Could not calculate form for player {player_id}: {e}")
 
-                        # Calculate fixture difficulty manually (e.g., based on opponent team strength)
+                        # Calculate fixture difficulty manually (based on opponent team strength)
                         fixture_difficulty = 3  # Default fixture difficulty value
                         try:
                             opponent_team_id = player_history["opponent_team"].values[0] if "opponent_team" in player_history.columns else None
@@ -148,17 +146,20 @@ async def fetch_historical_data(gameweek, data_dir):
                         except Exception as e:
                             logger.warning(f"⚠️ Could not calculate fixture difficulty for player {player_id}: {e}")
 
+                        # Handle missing 'selected_by_percent' column
+                        ownership = player_history["selected_by_percent"].values[0] if "selected_by_percent" in player_history.columns else 0.0
+
                         gameweek_data.append({
-                            "player_id": player_id,  # Player ID extracted from folder name
-                            "team": team_name,  # Team name from teams.csv
-                            "position": position,  # Player position mapped from element_type
+                            "player_id": player_id,
+                            "team": team_name,
+                            "position": position,
                             "total_points": player_history["total_points"].values[0],
-                            "form": form,  # Calculated form
+                            "form": form,
                             "minutes": player_history["minutes"].values[0],
-                            "fixture_difficulty": fixture_difficulty,  # Calculated fixture difficulty
+                            "fixture_difficulty": fixture_difficulty,
                             "opponent": player_history["opponent_team"].values[0] if "opponent_team" in player_history.columns else "Unknown",
-                            "ownership": player_history["selected_by_percent"].values[0] if "selected_by_percent" in player_history.columns else 0.0,
-                            "now_cost": now_cost  # Player cost from players_raw.csv
+                            "ownership": ownership,
+                            "now_cost": now_cost
                         })
 
         return gameweek_data
