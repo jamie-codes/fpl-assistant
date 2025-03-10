@@ -100,9 +100,9 @@ async def fetch_historical_data(gameweek, data_dir):
             logger.error(f"❌ teams.csv file not found at {teams_path}. Please ensure it exists.")
             raise FileNotFoundError(f"teams.csv file not found at {teams_path}.")
 
-        async with aiofiles.open(teams_path, mode='r') as f:
+        async with aiofiles.open(teams_path, mode='r', encoding='utf-8') as f:  # Specify encoding
             teams_content = await f.read()
-            teams_df = pd.read_csv(io.StringIO(teams_content))  # Use io.StringIO instead of pd.compat.StringIO
+            teams_df = pd.read_csv(io.StringIO(teams_content))
 
         # Load player data from players_raw.csv
         players_raw_path = os.path.join(data_dir, "players_raw.csv")
@@ -110,9 +110,9 @@ async def fetch_historical_data(gameweek, data_dir):
             logger.error(f"❌ players_raw.csv file not found at {players_raw_path}. Please ensure it exists.")
             raise FileNotFoundError(f"players_raw.csv file not found at {players_raw_path}.")
 
-        async with aiofiles.open(players_raw_path, mode='r') as f:
+        async with aiofiles.open(players_raw_path, mode='r', encoding='utf-8') as f:  # Specify encoding
             players_raw_content = await f.read()
-            players_raw_df = pd.read_csv(io.StringIO(players_raw_content))  # Use io.StringIO instead of pd.compat.StringIO
+            players_raw_df = pd.read_csv(io.StringIO(players_raw_content))
 
         # Iterate through each player's folder
         for player_folder in await aiofiles.os.listdir(players_dir):
@@ -127,9 +127,9 @@ async def fetch_historical_data(gameweek, data_dir):
                 # Load the player's gameweek data
                 gw_path = os.path.join(player_path, "gw.csv")
                 if await aiofiles.os.path.exists(gw_path):
-                    async with aiofiles.open(gw_path, mode='r') as f:
+                    async with aiofiles.open(gw_path, mode='r', encoding='utf-8') as f:  # Specify encoding
                         gw_content = await f.read()
-                        player_history = pd.read_csv(io.StringIO(gw_content))  # Use io.StringIO instead of pd.compat.StringIO
+                        player_history = pd.read_csv(io.StringIO(gw_content))
                     player_history = player_history[player_history["round"] == gameweek]
                     if not player_history.empty:
                         # Extract relevant data for the gameweek
@@ -151,9 +151,9 @@ async def fetch_historical_data(gameweek, data_dir):
                         form = 0.0  # Default form value
                         try:
                             # Load the player's full history to calculate form
-                            async with aiofiles.open(gw_path, mode='r') as f:
+                            async with aiofiles.open(gw_path, mode='r', encoding='utf-8') as f:  # Specify encoding
                                 player_full_history_content = await f.read()
-                                player_full_history = pd.read_csv(io.StringIO(player_full_history_content))  # Use io.StringIO instead of pd.compat.StringIO
+                                player_full_history = pd.read_csv(io.StringIO(player_full_history_content))
                             last_3_gws = player_full_history[player_full_history["round"].isin(range(gameweek - 3, gameweek))]
                             if not last_3_gws.empty and "total_points" in last_3_gws.columns:
                                 form = last_3_gws["total_points"].mean()
