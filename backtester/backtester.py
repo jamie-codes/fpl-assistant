@@ -62,17 +62,30 @@ BACKTEST_CONFIG = {
 
 async def generate_graphs(results):
     """Generate interactive graphs comparing strategy performance."""
-    # Create a DataFrame for the results
-    df = pd.DataFrame(results).T
-    df.reset_index(inplace=True)
-    df.rename(columns={"index": "Strategy"}, inplace=True)
+    try:
+        # Create a DataFrame for the results
+        data = []
+        for strategy_name, strategy_data in results.items():
+            total_points = strategy_data["total_points"]
+            points_per_gameweek = strategy_data["points_per_gameweek"]
+            for gameweek, points in enumerate(points_per_gameweek, start=1):
+                data.append({
+                    "Strategy": strategy_name,
+                    "Gameweek": gameweek,
+                    "Points": points
+                })
 
-    # Plot strategy performance
-    fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
-    fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
-    fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+        df = pd.DataFrame(data)
 
-    logger.info("📊 Generated interactive graphs for strategy comparison.")
+        # Plot strategy performance
+        fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
+        fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
+        fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+
+        logger.info("📊 Generated interactive graphs for strategy comparison.")
+    except Exception as e:
+        logger.error(f"❌ Error generating graphs: {e}")
+        raise
 
 async def fetch_historical_data(gameweek, data_dir):
     try:
@@ -121,7 +134,7 @@ async def fetch_historical_data(gameweek, data_dir):
                             element_type = player_info["element_type"].values[0]
                             position_map = {1: "Goalkeeper", 2: "Defender", 3: "Midfielder", 4: "Forward"}
                             position = position_map.get(element_type, "Unknown")
-                            now_cost = player_info["now_cost"].values[0] / 10  # Convert cost to millions
+                            now_cost = player_info["now_cost"].values[0] / 10 if "now_cost" in player_info.columns else 0.0  # Default now_cost value if the column is missing
                         else:
                             position = "Unknown"
                             now_cost = 0.0
@@ -129,10 +142,14 @@ async def fetch_historical_data(gameweek, data_dir):
                         # Calculate form manually (average points over the last 3 gameweeks)
                         form = 0.0  # Default form value
                         try:
-                            # Get the last 3 gameweeks' data for the player
-                            last_3_gws = player_history[player_history["round"].isin(range(gameweek - 3, gameweek))]
-                            if not last_3_gws.empty:
+                            # Load the player's full history to calculate form
+                            player_full_history = pd.read_csv(gw_path)
+                            last_3_gws = player_full_history[player_full_history["round"].isin(range(gameweek - 3, gameweek))]
+                            if not last_3_gws.empty and "total_points" in last_3_gws.columns:
+                                # Use the available data, even if it's less than 3 gameweeks
                                 form = last_3_gws["total_points"].mean()
+                            else:
+                                logger.debug(f"⚠️ Insufficient data to calculate form for player {player_id}. Using default value.")
                         except Exception as e:
                             logger.warning(f"⚠️ Could not calculate form for player {player_id}: {e}")
 
@@ -149,23 +166,28 @@ async def fetch_historical_data(gameweek, data_dir):
                         # Handle missing 'selected_by_percent' column
                         ownership = player_history["selected_by_percent"].values[0] if "selected_by_percent" in player_history.columns else 0.0
 
+                        # Ensure 'total_points' column exists in the DataFrame
+                        total_points = player_history["total_points"].values[0] if "total_points" in player_history.columns else 0
+
+                        # Ensure all required columns are present in the DataFrame
                         gameweek_data.append({
                             "player_id": player_id,
                             "team": team_name,
                             "position": position,
-                            "total_points": player_history["total_points"].values[0],
-                            "form": form,
-                            "minutes": player_history["minutes"].values[0],
-                            "fixture_difficulty": fixture_difficulty,
+                            "total_points": total_points,  # Always include 'total_points', even if it's 0
+                            "form": form,  # Always include 'form', even if it's 0.0
+                            "minutes": player_history["minutes"].values[0] if "minutes" in player_history.columns else 0,
+                            "fixture_difficulty": fixture_difficulty,  # Always include 'fixture_difficulty', even if it's 3.0
                             "opponent": player_history["opponent_team"].values[0] if "opponent_team" in player_history.columns else "Unknown",
-                            "ownership": ownership,
-                            "now_cost": now_cost
+                            "ownership": ownership,  # Always include 'ownership', even if it's 0.0
+                            "now_cost": now_cost  # Always include 'now_cost', even if it's 0.0
                         })
 
         return gameweek_data
     except Exception as e:
         logger.error(f"❌ Error fetching historical data for gameweek {gameweek}: {e}")
         raise
+
 
 async def simulate_strategy(strategy_name, gameweeks, data_dir):
     """Simulate a strategy over a range of gameweeks."""
@@ -177,6 +199,18 @@ async def simulate_strategy(strategy_name, gameweeks, data_dir):
     for gameweek in gameweeks:
         historical_data = await fetch_historical_data(gameweek, data_dir)
         df = pd.DataFrame(historical_data)
+
+        # Ensure 'form', 'fixture_difficulty', 'total_points', 'now_cost', and 'ownership' columns exist in the DataFrame
+        if "form" not in df.columns:
+            df["form"] = 0.0  # Default form value if the column is missing
+        if "fixture_difficulty" not in df.columns:
+            df["fixture_difficulty"] = 3.0  # Default fixture difficulty value if the column is missing
+        if "total_points" not in df.columns:
+            df["total_points"] = 0  # Default total_points value if the column is missing
+        if "now_cost" not in df.columns:
+            df["now_cost"] = 0.0  # Default now_cost value if the column is missing
+        if "ownership" not in df.columns:
+            df["ownership"] = 0.0  # Default ownership value if the column is missing
 
         # Apply strategy weights
         df["score"] = (
