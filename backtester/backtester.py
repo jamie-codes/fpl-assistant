@@ -1,5 +1,5 @@
 import asyncio
-import json
+import io
 import os
 import logging
 import smtplib
@@ -12,6 +12,8 @@ import plotly.express as px
 from fpl import FPL
 import aiohttp
 from dotenv import load_dotenv
+import aiofiles
+import aiofiles.os
 
 # Configuration
 load_dotenv()
@@ -94,24 +96,28 @@ async def fetch_historical_data(gameweek, data_dir):
 
         # Load team data from teams.csv
         teams_path = os.path.join(data_dir, "teams.csv")
-        if os.path.exists(teams_path):
-            teams_df = pd.read_csv(teams_path)
-        else:
-            logger.error("❌ teams.csv file not found. Please ensure it exists.")
-            raise FileNotFoundError("teams.csv file not found.")
+        if not await aiofiles.os.path.exists(teams_path):
+            logger.error(f"❌ teams.csv file not found at {teams_path}. Please ensure it exists.")
+            raise FileNotFoundError(f"teams.csv file not found at {teams_path}.")
+
+        async with aiofiles.open(teams_path, mode='r') as f:
+            teams_content = await f.read()
+            teams_df = pd.read_csv(io.StringIO(teams_content))  # Use io.StringIO instead of pd.compat.StringIO
 
         # Load player data from players_raw.csv
         players_raw_path = os.path.join(data_dir, "players_raw.csv")
-        if os.path.exists(players_raw_path):
-            players_raw_df = pd.read_csv(players_raw_path)
-        else:
-            logger.error("❌ players_raw.csv file not found. Please ensure it exists.")
-            raise FileNotFoundError("players_raw.csv file not found.")
+        if not await aiofiles.os.path.exists(players_raw_path):
+            logger.error(f"❌ players_raw.csv file not found at {players_raw_path}. Please ensure it exists.")
+            raise FileNotFoundError(f"players_raw.csv file not found at {players_raw_path}.")
+
+        async with aiofiles.open(players_raw_path, mode='r') as f:
+            players_raw_content = await f.read()
+            players_raw_df = pd.read_csv(io.StringIO(players_raw_content))  # Use io.StringIO instead of pd.compat.StringIO
 
         # Iterate through each player's folder
-        for player_folder in os.listdir(players_dir):
+        for player_folder in await aiofiles.os.listdir(players_dir):
             player_path = os.path.join(players_dir, player_folder)
-            if os.path.isdir(player_path):
+            if await aiofiles.os.path.isdir(player_path):
                 try:
                     player_id = int(player_folder.split("_")[-1])  # Extract player ID from folder name
                 except (IndexError, ValueError) as e:
@@ -120,8 +126,10 @@ async def fetch_historical_data(gameweek, data_dir):
 
                 # Load the player's gameweek data
                 gw_path = os.path.join(player_path, "gw.csv")
-                if os.path.exists(gw_path):
-                    player_history = pd.read_csv(gw_path)
+                if await aiofiles.os.path.exists(gw_path):
+                    async with aiofiles.open(gw_path, mode='r') as f:
+                        gw_content = await f.read()
+                        player_history = pd.read_csv(io.StringIO(gw_content))  # Use io.StringIO instead of pd.compat.StringIO
                     player_history = player_history[player_history["round"] == gameweek]
                     if not player_history.empty:
                         # Extract relevant data for the gameweek
@@ -143,10 +151,11 @@ async def fetch_historical_data(gameweek, data_dir):
                         form = 0.0  # Default form value
                         try:
                             # Load the player's full history to calculate form
-                            player_full_history = pd.read_csv(gw_path)
+                            async with aiofiles.open(gw_path, mode='r') as f:
+                                player_full_history_content = await f.read()
+                                player_full_history = pd.read_csv(io.StringIO(player_full_history_content))  # Use io.StringIO instead of pd.compat.StringIO
                             last_3_gws = player_full_history[player_full_history["round"].isin(range(gameweek - 3, gameweek))]
                             if not last_3_gws.empty and "total_points" in last_3_gws.columns:
-                                # Use the available data, even if it's less than 3 gameweeks
                                 form = last_3_gws["total_points"].mean()
                             else:
                                 logger.debug(f"⚠️ Insufficient data to calculate form for player {player_id}. Using default value.")
