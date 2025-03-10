@@ -74,21 +74,6 @@ async def generate_graphs(results):
 
     logger.info("📊 Generated interactive graphs for strategy comparison.")
 
-
-async def load_cookies():
-    """Load cookies from cookies.json."""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    cookies_path = os.path.join(base_dir, "cookies.json")
-    try:
-        with open(cookies_path, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logger.error("❌ cookies.json file not found. Please ensure it exists.")
-        raise
-    except json.JSONDecodeError:
-        logger.error("❌ cookies.json is not a valid JSON file.")
-        raise
-
 async def fetch_historical_data(gameweek, data_dir):
     """
     Fetch historical player data for a specific gameweek from the players folder.
@@ -104,6 +89,14 @@ async def fetch_historical_data(gameweek, data_dir):
         else:
             logger.error("❌ teams.csv file not found. Please ensure it exists.")
             raise FileNotFoundError("teams.csv file not found.")
+
+        # Load player data from players_raw.csv
+        players_raw_path = os.path.join(data_dir, "players_raw.csv")
+        if os.path.exists(players_raw_path):
+            players_raw_df = pd.read_csv(players_raw_path)
+        else:
+            logger.error("❌ players_raw.csv file not found. Please ensure it exists.")
+            raise FileNotFoundError("players_raw.csv file not found.")
 
         # Iterate through each player's folder
         for player_folder in os.listdir(players_dir):
@@ -127,20 +120,45 @@ async def fetch_historical_data(gameweek, data_dir):
                         team_name = teams_df[teams_df["id"] == team_id]["name"].values[0] if team_id else "Unknown Team"
 
                         # Map element_type to position (1: GK, 2: DEF, 3: MID, 4: FWD)
-                        element_type = player_history["element_type"].values[0] if "element_type" in player_history.columns else None
-                        position_map = {1: "Goalkeeper", 2: "Defender", 3: "Midfielder", 4: "Forward"}
-                        position = position_map.get(element_type, "Unknown")
+                        player_info = players_raw_df[players_raw_df["id"] == player_id]
+                        if not player_info.empty:
+                            element_type = player_info["element_type"].values[0]
+                            position_map = {1: "Goalkeeper", 2: "Defender", 3: "Midfielder", 4: "Forward"}
+                            position = position_map.get(element_type, "Unknown")
+                            now_cost = player_info["now_cost"].values[0] / 10  # Convert cost to millions
+                        else:
+                            position = "Unknown"
+                            now_cost = 0.0
+
+                        # Calculate form manually (e.g., average points over the last 3 gameweeks)
+                        form = 0.0  # Default form value
+                        try:
+                            last_3_gws = player_history[player_history["round"].isin(range(gameweek - 3, gameweek))]
+                            form = last_3_gws["total_points"].mean() if not last_3_gws.empty else 0.0
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not calculate form for player {player_id}: {e}")
+
+                        # Calculate fixture difficulty manually (e.g., based on opponent team strength)
+                        fixture_difficulty = 3  # Default fixture difficulty value
+                        try:
+                            opponent_team_id = player_history["opponent_team"].values[0] if "opponent_team" in player_history.columns else None
+                            if opponent_team_id:
+                                opponent_strength = teams_df[teams_df["id"] == opponent_team_id]["strength"].values[0]
+                                fixture_difficulty = max(1, min(opponent_strength, 5))  # Cap difficulty between 1 and 5
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not calculate fixture difficulty for player {player_id}: {e}")
 
                         gameweek_data.append({
                             "player_id": player_id,  # Player ID extracted from folder name
                             "team": team_name,  # Team name from teams.csv
                             "position": position,  # Player position mapped from element_type
                             "total_points": player_history["total_points"].values[0],
-                            "form": player_history["form"].values[0],
+                            "form": form,  # Calculated form
                             "minutes": player_history["minutes"].values[0],
-                            "fixture_difficulty": player_history["fixture_difficulty"].values[0],
-                            "opponent": player_history["opponent_team"].values[0],
-                            "ownership": player_history["selected_by_percent"].values[0]
+                            "fixture_difficulty": fixture_difficulty,  # Calculated fixture difficulty
+                            "opponent": player_history["opponent_team"].values[0] if "opponent_team" in player_history.columns else "Unknown",
+                            "ownership": player_history["selected_by_percent"].values[0] if "selected_by_percent" in player_history.columns else 0.0,
+                            "now_cost": now_cost  # Player cost from players_raw.csv
                         })
 
         return gameweek_data
@@ -177,7 +195,6 @@ async def simulate_strategy(strategy_name, gameweeks, data_dir):
 
     return total_points, points_per_gameweek
 
-
 async def compare_strategies(gameweeks, data_dir):
     """Compare the performance of all strategies."""
     results = {}
@@ -188,7 +205,6 @@ async def compare_strategies(gameweeks, data_dir):
             "points_per_gameweek": points_per_gameweek
         }
     return results
-
 
 async def export_results(results):
     """Export the results of the backtest to CSV and Excel."""
