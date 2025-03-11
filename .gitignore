@@ -6,3 +6,7 @@ fpl_suggestions*.*
 transfers_out*.*
 *.log
 *.pyc
+*.csv
+*.xlsx
+strategy_comparison.html
+strategy_comparison.png
