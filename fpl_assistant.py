@@ -10,7 +10,6 @@ import pandas as pd
 from fpl import FPL
 import aiohttp
 from dotenv import load_dotenv
-from backtester.backtester import compare_strategies, generate_graphs, export_results
 
 # Configuration
 TEAM_ID = 6378398
@@ -1022,13 +1021,6 @@ async def main():
             starting_xi_html = build_html_table(starting_xi.to_dict('records')) if starting_xi is not None else "<p>No starting XI data available.</p>"
             bench_html = build_html_table(bench.to_dict('records')) if bench is not None else "<p>No bench data available.</p>"
 
-            # Run the backtester and get results
-            logger.info("\n🌟 Running Backtester for Strategy Comparison:")
-            data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "2022-23")
-            backtest_results = await compare_strategies(range(1, CURRENT_GAMEWEEK), data_dir)
-            await generate_graphs(backtest_results)
-            await export_results(backtest_results)
-
             # Create the email body with HTML formatting
             email_body = f"""
                 <h2>ℹ️ Explanation of Metrics</h2>
@@ -1109,11 +1101,6 @@ async def main():
                 {underperforming_players_html}
                 <p>Suggested Replacements:</p>
                 {replacements_html}
-                <h2>🌟 Backtester Results</h2>
-                <p>Strategy Performance Comparison:</p>
-                <img src="{OUTPUT_DIR}/strategy_comparison.png" alt="Strategy Comparison Graph">
-                <p>Backtest Results:</p>
-                <a href="{OUTPUT_DIR}/backtest_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv">Download CSV</a>
             """
 
             # Send email with suggestions
