@@ -141,10 +141,20 @@ async def fetch_player_data(fpl, player, team_fixtures):
         total_points = player.total_points if player.total_points else 0.0
 
         # Calculate Value for Money (VFM)
-        vfm = total_points / now_cost if now_cost > 0 else 0.0
+        vfm = round(total_points / now_cost, 2) if now_cost > 0 else 0.0
 
         # Fetch team logo and player photo URLs (handle missing fields)
-        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png" if player.team else "https://via.placeholder.com/30"
+        team_logo_url = f"https://resources.premierleague.com/premierleague/badges/t{player.team}.png"
+        # Verify if the URL is accessible, if not use a fallback
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(team_logo_url) as response:
+                    if response.status != 200:
+                        team_logo_url = "https://via.placeholder.com/30"
+        except Exception as e:
+            logger.error(f"❌ Error verifying team logo URL: {e}")
+            team_logo_url = "https://via.placeholder.com/30"
+
         player_photo_url = f"https://resources.premierleague.com/premierleague/photos/players/110x140/p{player.code}.png" if hasattr(player, 'code') and player.code else "https://via.placeholder.com/50"
 
         return {
@@ -164,12 +174,24 @@ async def fetch_player_data(fpl, player, team_fixtures):
         return None
     
 def generate_player_row(player):
-    """Generate an HTML table row for a player, including team logos and player photos."""
+    player_photo = player.get('player_photo') or 'https://via.placeholder.com/40x50?text=Player'
+    team_logo = player.get('team_logo') or 'https://via.placeholder.com/40x40?text=Logo'
+
     return f"""
     <tr>
-        <td><img src="{player.get('player_photo', 'https://via.placeholder.com/50')}" alt="{player.get('full_name', 'Unknown')}">
-        {player.get('full_name', 'Unknown')}</td>
-        <td><img src="{player.get('team_logo', 'https://via.placeholder.com/30')}" alt="Team Logo" title="{get_team_name(player.get('team', 0))}"></td>
+        <td style="text-align:left;">
+            <img src="{player_photo}" 
+                 alt="{player.get('full_name', 'Unknown')}" 
+                 style="width:30px; height:40px; border-radius:5px; margin-right:8px; vertical-align:middle;">
+            {player.get('full_name', 'Unknown')}
+        </td>
+        <td style="text-align:left;">
+            <img src="{team_logo}" 
+                 alt="Team Logo" 
+                 title="{get_team_name(player.get('team', 0))}" 
+                 style="width:40px; height:40px; border-radius:50%; margin-right:8px; vertical-align:middle;">
+            {get_team_name(player.get('team', 0))}
+        </td>
         <td>{player.get('position', 'Unknown')}</td>
         <td>{player.get('form', 'N/A')}</td>
         <td>{player.get('total_points', 'N/A')}</td>
@@ -178,6 +200,7 @@ def generate_player_row(player):
         <td>{player.get('vfm', 'N/A')}</td>
     </tr>
     """
+
 
 def get_team_name(team_id):
     """Map team IDs to team names."""
@@ -235,19 +258,34 @@ def build_html_table(players):
 async def suggest_best_players(fpl, team_fixtures, top_n=10):
     """Suggest the best players to pick based on form, points, and FDR."""
     try:
+        logger.info("Fetching players data...")
         players = await fpl.get_players()
         player_data = []
+
         for player in players:
-            data = await fetch_player_data(fpl, player, team_fixtures)
-            if data:
-                player_data.append(data)
+            try:
+                #logger.debug(f"Fetching data for player: {player.first_name} {player.second_name}")
+                data = await fetch_player_data(fpl, player, team_fixtures)
+                if data:
+                    player_data.append(data)
+                # Add a small delay to avoid hitting rate limits
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"❌ Error fetching data for player {player.first_name} {player.second_name}: {e}")
+                continue
+
+        if not player_data:
+            logger.warning("⚠️ No valid player data found.")
+            return pd.DataFrame()
 
         df = pd.DataFrame(player_data)
+        logger.info("Sorting players by form, total points, and FDR...")
         top_players = df.sort_values(
             by=["form", "total_points", "fixture_difficulty"],
             ascending=[False, False, True]
         ).head(top_n)
 
+        logger.info("✅ Best players suggestion completed.")
         return top_players
     except Exception as e:
         logger.error(f"❌ Error suggesting best players: {e}")
@@ -523,79 +561,37 @@ async def send_email(subject, body):
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
 
-        # Attach the HTML body with improved styling and gameweek title
-        email_body = f"""
-        <html>
-        <head>
-            <style>
-                body {{
-                    font-family: Arial, sans-serif;
-                    background-color: #f9f9f9;
-                    padding: 20px;
-                    color: #333333;
-                }}
-                .email-container {{
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background-color: #ffffff;
-                    padding: 20px;
-                    border-radius: 10px;
-                    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-                }}
-                h1 {{
-                    text-align: center;
-                    color: #0044cc;
-                    margin-bottom: 20px;
-                }}
-                h2 {{
-                    background-color: #0044cc;
-                    color: #ffffff;
-                    padding: 10px;
-                    border-radius: 5px;
-                    text-align: center;
-                }}
-                table {{
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin: 20px 0;
-                }}
-                th, td {{
-                    padding: 10px;
-                    text-align: center;
-                    border: 1px solid #dddddd;
-                }}
-                th {{
-                    background-color: #007bff;
-                    color: #ffffff;
-                }}
-                tr:nth-child(even) {{
-                    background-color: #f2f2f2;
-                }}
-                tr:hover {{
-                    background-color: #e6f7ff;
-                }}
-                img {{
-                    vertical-align: middle;
-                }}
-                .footer {{
-                    text-align: center;
-                    margin-top: 20px;
-                    font-size: 12px;
-                    color: #777777;
-                }}
-            </style>
-        </head>
-        <body>
-            <div class="email-container">
-                <h1>FPL Assistant - Gameweek {CURRENT_GAMEWEEK}</h1>
-                {body}
-                <div class="footer">
-                    <p>This email was generated by the FPL Assistant. Please do not reply to this email.</p>
-                </div>
-            </div>
-        </body>
-        </html>
+        # Load the email template
+        email_template = load_email_template()
+
+        # Replace placeholders with actual data
+        email_body = email_template.replace("{CURRENT_GAMEWEEK}", str(CURRENT_GAMEWEEK))
+        email_body = email_body.replace("{CAPTAIN_NAME}", captain.iloc[0]['full_name'])
+        email_body = email_body.replace("{CAPTAIN_TEAM}", get_team_name(captain.iloc[0]['team']))
+        email_body = email_body.replace("{CAPTAIN_FORM}", str(captain.iloc[0]['form']))
+        email_body = email_body.replace("{CAPTAIN_FDR}", str(captain.iloc[0]['fixture_difficulty']))
+        email_body = email_body.replace("{VICE_CAPTAIN_NAME}", vice_captain.iloc[0]['full_name'])
+        email_body = email_body.replace("{VICE_CAPTAIN_TEAM}", get_team_name(vice_captain.iloc[0]['team']))
+        email_body = email_body.replace("{VICE_CAPTAIN_FORM}", str(vice_captain.iloc[0]['form']))
+        email_body = email_body.replace("{VICE_CAPTAIN_FDR}", str(vice_captain.iloc[0]['fixture_difficulty']))
+        email_body = email_body.replace("{TRANSFER_SUGGESTIONS}", str(transfer_suggestions))
+        email_body = email_body.replace("{CHIP_SUGGESTIONS}", str(chip_suggestions))
+        email_body = email_body.replace("{BEST_PLAYERS_TABLE}", build_html_table(best_players.to_dict('records')))
+        email_body = email_body.replace("{TRANSFERS_OUT_TABLE}", build_html_table(transfers_out.to_dict('records')))
+        email_body = email_body.replace("{FREE_HIT_TEAM_TABLE}", build_html_table(free_hit_team.to_dict('records')))
+        email_body = email_body.replace("{DGW_TEAM_TABLE}", build_html_table(dgw_team.to_dict('records')))
+        email_body = email_body.replace("{MINI_LEAGUE_INSIGHTS_TABLE}", "<p>No mini-league data available.</p>")
+
+        # Add explanations for metrics at the top of the email
+        explanations = """
+        <h2>ℹ️ Explanation of Metrics</h2>
+        <ul>
+            <li><strong>VFM (Value for Money):</strong> Total points per million spent. 💰 <em>Higher is better</em>.</li>
+            <li><strong>Form:</strong> A player's recent performance, calculated over the last 30 days. 📈 <em>Higher is better</em>.</li>
+            <li><strong>Fixture Difficulty Rating (FDR):</strong> Measures the difficulty of upcoming fixtures. ⚠️ <em>Lower is better</em>.</li>
+        </ul>
         """
+        email_body = email_body.replace("<!-- Summary Section -->", explanations + "<!-- Summary Section -->")
 
         msg.attach(MIMEText(email_body, "html"))
 
@@ -896,6 +892,16 @@ async def track_team_value(fpl, user_team):
         logger.error(f"❌ Error tracking team value: {e}")
         raise
 
+def load_email_template():
+    """Load the email template from email_template.html."""
+    template_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "email_template.html")
+    try:
+        with open(template_path, "r", encoding="utf-8") as file:
+            return file.read()
+    except FileNotFoundError:
+        logger.error("❌ email_template.html file not found. Please ensure it exists.")
+        raise
+
 async def main():
     """Main function to run the FPL assistant."""
     try:
@@ -1016,8 +1022,13 @@ async def main():
             bench_html = build_html_table(bench.to_dict('records')) if bench is not None else "<p>No bench data available.</p>"
 
             # Create the email body with HTML formatting
-            # Create the email body with HTML formatting
             email_body = f"""
+                <h2>ℹ️ Explanation of Metrics</h2>
+                <ul>
+                <li><strong>FDR (Fixture Difficulty Rating):</strong> Measures the difficulty of upcoming fixtures. ⚠️ <em>Lower is better</em>.</li>
+                <li><strong>VFM (Value For Money):</strong> Total points per million spent. 💰 <em>Higher is better</em>. (Rounded to 2 decimal places)</li>
+                </ul>
+
                 <h2>🌟 Starting XI</h2>
                 {starting_xi_html}
                 <h2>🌟 Bench</h2>
