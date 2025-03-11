@@ -65,6 +65,7 @@ BACKTEST_CONFIG = {
 async def generate_graphs(results):
     """Generate interactive graphs comparing strategy performance."""
     try:
+        logger.debug("Starting to generate graphs")
         # Create a DataFrame for the results
         data = []
         for strategy_name, strategy_data in results.items():
@@ -79,18 +80,21 @@ async def generate_graphs(results):
 
         df = pd.DataFrame(data)
 
-        # Plot strategy performance
-        fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
-        fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
-        fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+        # Plot strategy performance (run in a thread pool to avoid blocking)
+        def plot_graph():
+            fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
+            fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
+            fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
 
-        logger.info("📊 Generated interactive graphs for strategy comparison.")
+        await asyncio.to_thread(plot_graph)
+        logger.debug("Finished generating graphs")
     except Exception as e:
         logger.error(f"❌ Error generating graphs: {e}")
         raise
 
 async def fetch_historical_data(gameweek, data_dir):
     try:
+        logger.debug(f"Starting to fetch historical data for gameweek {gameweek}")
         gameweek_data = []
         players_dir = os.path.join(data_dir, "players")
 
@@ -100,9 +104,10 @@ async def fetch_historical_data(gameweek, data_dir):
             logger.error(f"❌ teams.csv file not found at {teams_path}. Please ensure it exists.")
             raise FileNotFoundError(f"teams.csv file not found at {teams_path}.")
 
-        async with aiofiles.open(teams_path, mode='r', encoding='utf-8') as f:  # Specify encoding
+        async with aiofiles.open(teams_path, mode='r', encoding='utf-8') as f:
             teams_content = await f.read()
             teams_df = pd.read_csv(io.StringIO(teams_content))
+        logger.debug(f"Loaded team data for gameweek {gameweek}")
 
         # Load player data from players_raw.csv
         players_raw_path = os.path.join(data_dir, "players_raw.csv")
@@ -110,12 +115,16 @@ async def fetch_historical_data(gameweek, data_dir):
             logger.error(f"❌ players_raw.csv file not found at {players_raw_path}. Please ensure it exists.")
             raise FileNotFoundError(f"players_raw.csv file not found at {players_raw_path}.")
 
-        async with aiofiles.open(players_raw_path, mode='r', encoding='utf-8') as f:  # Specify encoding
+        async with aiofiles.open(players_raw_path, mode='r', encoding='utf-8') as f:
             players_raw_content = await f.read()
             players_raw_df = pd.read_csv(io.StringIO(players_raw_content))
+        logger.debug(f"Loaded player data for gameweek {gameweek}")
 
         # Iterate through each player's folder
-        for player_folder in await aiofiles.os.listdir(players_dir):
+        player_folders = await aiofiles.os.listdir(players_dir)
+        logger.debug(f"Found {len(player_folders)} players to process for gameweek {gameweek}")
+
+        for player_folder in player_folders:
             player_path = os.path.join(players_dir, player_folder)
             if await aiofiles.os.path.isdir(player_path):
                 try:
@@ -124,10 +133,12 @@ async def fetch_historical_data(gameweek, data_dir):
                     logger.warning(f"⚠️ Could not extract player ID from folder name: {player_folder}")
                     continue
 
+                logger.debug(f"Processing player {player_id} for gameweek {gameweek}")
+
                 # Load the player's gameweek data
                 gw_path = os.path.join(player_path, "gw.csv")
                 if await aiofiles.os.path.exists(gw_path):
-                    async with aiofiles.open(gw_path, mode='r', encoding='utf-8') as f:  # Specify encoding
+                    async with aiofiles.open(gw_path, mode='r', encoding='utf-8') as f:
                         gw_content = await f.read()
                         player_history = pd.read_csv(io.StringIO(gw_content))
                     player_history = player_history[player_history["round"] == gameweek]
@@ -151,7 +162,7 @@ async def fetch_historical_data(gameweek, data_dir):
                         form = 0.0  # Default form value
                         try:
                             # Load the player's full history to calculate form
-                            async with aiofiles.open(gw_path, mode='r', encoding='utf-8') as f:  # Specify encoding
+                            async with aiofiles.open(gw_path, mode='r', encoding='utf-8') as f:
                                 player_full_history_content = await f.read()
                                 player_full_history = pd.read_csv(io.StringIO(player_full_history_content))
                             last_3_gws = player_full_history[player_full_history["round"].isin(range(gameweek - 3, gameweek))]
@@ -192,6 +203,7 @@ async def fetch_historical_data(gameweek, data_dir):
                             "now_cost": now_cost  # Always include 'now_cost', even if it's 0.0
                         })
 
+        logger.debug(f"Finished fetching historical data for gameweek {gameweek}")
         return gameweek_data
     except Exception as e:
         logger.error(f"❌ Error fetching historical data for gameweek {gameweek}: {e}")
@@ -200,12 +212,14 @@ async def fetch_historical_data(gameweek, data_dir):
 
 async def simulate_strategy(strategy_name, gameweeks, data_dir):
     """Simulate a strategy over a range of gameweeks."""
+    logger.debug(f"Starting simulation for strategy: {strategy_name}")
     strategy = STRATEGIES[strategy_name]
     squad = []
     total_points = 0
     points_per_gameweek = []
 
     for gameweek in gameweeks:
+        logger.debug(f"Processing gameweek {gameweek} for strategy: {strategy_name}")
         historical_data = await fetch_historical_data(gameweek, data_dir)
         df = pd.DataFrame(historical_data)
 
@@ -237,6 +251,7 @@ async def simulate_strategy(strategy_name, gameweeks, data_dir):
         total_points += squad["total_points"].sum()
         points_per_gameweek.append(squad["total_points"].sum())
 
+    logger.debug(f"Finished simulation for strategy: {strategy_name}")
     return total_points, points_per_gameweek
 
 async def compare_strategies(gameweeks, data_dir):
