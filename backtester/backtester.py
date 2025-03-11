@@ -3,14 +3,15 @@ import io
 import os
 import logging
 import smtplib
+from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email import encoders
 from datetime import datetime
 import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.express as px
 from fpl import FPL
-import aiohttp
 from dotenv import load_dotenv
 import aiofiles
 import aiofiles.os
@@ -81,37 +82,46 @@ async def generate_graphs(results):
 
         df = pd.DataFrame(data)
         logger.debug(f"✅ DataFrame created with {len(df)} rows")
-
-        # Debugging - Show first few rows
         logger.debug(df.head())
-
-        # Check if dataset is too large
-        if len(df) > 5000:
-            logger.warning("⚠️ Large dataset detected, this may slow down graph generation.")
 
         def plot_graph():
             try:
-                logger.debug("📊 Plotting graph...")
+                logger.debug("📊 Creating figure...")
                 fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
-                
-                # Ensure plotly can save images
+                logger.debug("✅ Figure created.")
+
+                # Try saving the image
                 try:
-                    fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
+                    logger.debug("📊 Exporting image...")
+                    fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png", engine="kaleido")
+                    logger.debug("✅ Image saved successfully.")
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save image: {e}")
 
-                fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
-                logger.debug("✅ Graph generated successfully.")
+                try:
+                    logger.debug("📊 Exporting HTML...")
+                    fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+                    logger.debug("✅ HTML file saved successfully.")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to save HTML file: {e}")
+
+
+
+                logger.debug("✅ Finished plotting graph.")
+            
             except Exception as e:
                 logger.error(f"❌ Graph generation error: {e}")
 
-        await asyncio.to_thread(plot_graph)
+
+        # Run plot_graph() synchronously first
+        plot_graph()
 
         logger.debug("🔵 Finished generating graphs")
 
     except Exception as e:
         logger.error(f"❌ Error generating graphs: {e}")
         raise
+
 
 
 async def fetch_historical_data(gameweek, data_dir):
@@ -356,10 +366,18 @@ async def main():
             email_body = "<h1>FPL Backtest Results</h1>"
             for strategy_name, data in results.items():
                 email_body += f"<h2>{strategy_name}</h2><p>Total Points: {data['total_points']}</p>"
-            attachments = [
-                f"{OUTPUT_DIR}/strategy_comparison.png",
-                f"{OUTPUT_DIR}/backtest_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-            ]
+
+                attachments = [
+                    f"{OUTPUT_DIR}/strategy_comparison.png",
+                    f"{OUTPUT_DIR}/backtest_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+                ]
+
+                # Only add existing files
+                valid_attachments = [f for f in attachments if os.path.exists(f)]
+
+                if not valid_attachments:
+                    logger.warning("⚠️ No attachments found. Email will be sent without files.")
+
             await send_email("FPL Backtest Results", email_body, attachments)
 
     except Exception as e:
