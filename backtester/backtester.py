@@ -65,8 +65,9 @@ BACKTEST_CONFIG = {
 async def generate_graphs(results):
     """Generate interactive graphs comparing strategy performance."""
     try:
-        logger.debug("Starting to generate graphs")
-        # Create a DataFrame for the results
+        logger.debug("🔵 Starting to generate graphs...")
+
+        # Create DataFrame for results
         data = []
         for strategy_name, strategy_data in results.items():
             total_points = strategy_data["total_points"]
@@ -79,18 +80,39 @@ async def generate_graphs(results):
                 })
 
         df = pd.DataFrame(data)
+        logger.debug(f"✅ DataFrame created with {len(df)} rows")
 
-        # Plot strategy performance (run in a thread pool to avoid blocking)
+        # Debugging - Show first few rows
+        logger.debug(df.head())
+
+        # Check if dataset is too large
+        if len(df) > 5000:
+            logger.warning("⚠️ Large dataset detected, this may slow down graph generation.")
+
         def plot_graph():
-            fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
-            fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
-            fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+            try:
+                logger.debug("📊 Plotting graph...")
+                fig = px.line(df, x="Gameweek", y="Points", color="Strategy", title="Strategy Performance Comparison")
+                
+                # Ensure plotly can save images
+                try:
+                    fig.write_image(f"{OUTPUT_DIR}/strategy_comparison.png")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to save image: {e}")
+
+                fig.write_html(f"{OUTPUT_DIR}/strategy_comparison.html")
+                logger.debug("✅ Graph generated successfully.")
+            except Exception as e:
+                logger.error(f"❌ Graph generation error: {e}")
 
         await asyncio.to_thread(plot_graph)
-        logger.debug("Finished generating graphs")
+
+        logger.debug("🔵 Finished generating graphs")
+
     except Exception as e:
         logger.error(f"❌ Error generating graphs: {e}")
         raise
+
 
 async def fetch_historical_data(gameweek, data_dir):
     try:
