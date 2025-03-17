@@ -280,10 +280,14 @@ async def suggest_best_players(fpl, team_fixtures, top_n=10):
 
         df = pd.DataFrame(player_data)
         logger.info("Sorting players by form, total points, and FDR...")
-        top_players = df.sort_values(
-            by=["form", "total_points", "fixture_difficulty"],
-            ascending=[False, False, True]
-        ).head(top_n)
+        df["score"] = (
+            (df["form"] * 0.2) +  # Lower weight if Form-Based didn't perform best
+            (df["total_points"] * 0.3) +
+            ((5 - df["fixture_difficulty"]) * 0.25) +  # Adjust FDR weight
+            (df["vfm"] * 0.35)  # Boost Value-Based metric
+        )
+        top_players = df.sort_values(by="score", ascending=False).head(top_n)
+
 
         logger.info("✅ Best players suggestion completed.")
         return top_players
@@ -303,7 +307,8 @@ async def suggest_captain(fpl, team_fixtures, user_team):
                 continue
 
             fdr = await calculate_team_fdr(team_fixtures, player.team)
-            captain_score = (float(player.form) * 0.4) + (player.total_points * 0.3) + ((6 - fdr) * 0.3)
+            captain_score = (float(player.form) * 0.25) + (player.total_points * 0.3) + ((6 - fdr) * 0.2) + (player.vfm * 0.35)
+
             captain_data.append({
                 "full_name": f"{player.first_name} {player.second_name}",
                 "team": player.team,
@@ -378,7 +383,8 @@ async def suggest_bench_boost(fpl, team_fixtures, user_team):
             for player in bench_players:
                 fdr = team_fixtures.get(player.team, {}).get(gw, 5)
                 capped_fdr = max(1, min(fdr, 5))
-                bench_score = max(0, (float(player.form) * 0.6) + ((5 - capped_fdr) * 0.4))
+                bench_score = max(0, (float(player.form) * 0.4) + ((5 - capped_fdr) * 0.3) + (player.vfm * 0.3))
+
                 total_bench_score += bench_score
                 logger.debug(f"Gameweek {gw} - {player.first_name} {player.second_name}: Form = {player.form}, FDR = {fdr}, Bench Score = {bench_score}")
 
@@ -581,6 +587,15 @@ async def send_email(subject, body):
         email_body = email_body.replace("{FREE_HIT_TEAM_TABLE}", build_html_table(free_hit_team.to_dict('records')))
         email_body = email_body.replace("{DGW_TEAM_TABLE}", build_html_table(dgw_team.to_dict('records')))
         email_body = email_body.replace("{MINI_LEAGUE_INSIGHTS_TABLE}", "<p>No mini-league data available.</p>")
+        best_strategy = max(results, key=lambda x: results[x]["total_points"])
+        best_points = results[best_strategy]["total_points"]
+
+        email_body += f"""
+        <h2>📊 Best Strategy Based on Backtesting</h2>
+        <p>The highest-scoring strategy was <b>{best_strategy}</b> with <b>{best_points} total points</b>.</p>
+        <p>We have adjusted our player selection model to incorporate these insights into our recommendations.</p>
+        """
+
 
         # Add explanations for metrics at the top of the email
         explanations = """
@@ -771,7 +786,14 @@ async def suggest_transfers(fpl, team_fixtures, user_team, budget=100.0, free_tr
         df["fixture_difficulty"] = pd.to_numeric(df["fixture_difficulty"], errors="coerce")
         df = df.dropna(subset=["now_cost", "form", "fixture_difficulty"])
 
-        best_players = df.sort_values(by=["form", "total_points", "fixture_difficulty"], ascending=[False, False, True])
+        df["transfer_score"] = (
+            (df["form"] * 0.2) +  
+            (df["total_points"] * 0.3) +
+            ((5 - df["fixture_difficulty"]) * 0.25) +
+            (df["vfm"] * 0.35)  # Boost Value-Based picks
+        )
+        best_players = df.sort_values(by="transfer_score", ascending=False)
+
 
         transfers = []
         for player in my_players:
@@ -921,7 +943,7 @@ async def main():
 
             # Fetch the user's current players
             my_players = [await fpl.get_player(p["element"]) for p in user_team]
-
+    
             # Suggest the optimal starting XI and bench
             logger.info("\n🌟 Suggesting Optimal Starting XI and Bench:")
             starting_xi, bench, captain, vice_captain = await suggest_starting_xi(fpl, my_players, team_fixtures)

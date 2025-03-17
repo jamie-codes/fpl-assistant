@@ -302,34 +302,72 @@ async def export_results(results):
     try:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M')
         df = pd.DataFrame(results).T
-        df.to_csv(f'{OUTPUT_DIR}/backtest_results_{timestamp}.csv', index=True)
-        with pd.ExcelWriter(f'{OUTPUT_DIR}/backtest_results_{timestamp}.xlsx') as writer:
+
+        # Convert 'points_per_gameweek' to a readable format
+        df["points_per_gameweek"] = df["points_per_gameweek"].apply(lambda x: ", ".join(map(str, x)))
+
+        csv_path = f"{OUTPUT_DIR}/backtest_results_{timestamp}.csv"
+        excel_path = f"{OUTPUT_DIR}/backtest_results_{timestamp}.xlsx"
+
+        df.to_csv(csv_path, index=True)
+        with pd.ExcelWriter(excel_path) as writer:
             df.to_excel(writer, sheet_name='Backtest Results', index=True)
+
         logger.info("📁 Exported backtest results to CSV and Excel.")
+
+        return csv_path, excel_path  # Return file paths for email
     except Exception as e:
         logger.error(f"❌ Error exporting results: {e}")
         raise
 
-async def send_email(subject, body, attachments=None):
-    """Send an email with the given subject and body (HTML formatted)."""
+
+async def send_email(subject, results, attachments):
+    """Send an email with the backtest results and recommendations."""
     try:
         msg = MIMEMultipart()
         msg["From"] = EMAIL_CONFIG["sender_email"]
         msg["To"] = EMAIL_CONFIG["receiver_email"]
         msg["Subject"] = subject
 
-        msg.attach(MIMEText(body, "html"))
+        # Determine best-performing strategy
+        best_strategy = max(results, key=lambda x: results[x]["total_points"])
+        best_points = results[best_strategy]["total_points"]
 
+        # Format email body
+        email_body = f"""
+        <h1>FPL Backtest Results</h1>
+        <p>The backtest has completed successfully. Below is a summary of the performance of different strategies.</p>
+        <h2>Strategy Overview</h2>
+        <ul>
+            <li><b>Form-Based</b>: Focuses on recent player performance.</li>
+            <li><b>Fixture-Based</b>: Prioritizes players with easier upcoming fixtures.</li>
+            <li><b>Value-Based</b>: Optimizes for points per unit cost.</li>
+            <li><b>Differential-Based</b>: Selects low-ownership players to gain an edge.</li>
+            <li><b>Balanced</b>: A mix of form, fixture, and value.</li>
+        </ul>
+        <h2>Results Summary</h2>
+        <ul>
+        """
+        for strategy, data in results.items():
+            email_body += f"<li><b>{strategy}</b>: {data['total_points']} total points</li>"
+
+        email_body += f"""
+        </ul>
+        <h2>Recommended Strategy</h2>
+        <p>The best-performing strategy was <b>{best_strategy}</b>, with a total of <b>{best_points} points</b>. 
+        Based on these results, you should consider using this approach for optimal FPL team performance.</p>
+        """
+
+        msg.attach(MIMEText(email_body, "html"))
+
+        # Attach files if they exist
         if attachments:
             for attachment in attachments:
                 with open(attachment, "rb") as f:
                     part = MIMEBase("application", "octet-stream")
                     part.set_payload(f.read())
                 encoders.encode_base64(part)
-                part.add_header(
-                    "Content-Disposition",
-                    f"attachment; filename={os.path.basename(attachment)}",
-                )
+                part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(attachment)}")
                 msg.attach(part)
 
         with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
@@ -342,43 +380,31 @@ async def send_email(subject, body, attachments=None):
         logger.error(f"❌ Error sending email: {e}")
         raise
 
+
 async def main():
     """Main function to run the FPL backtester."""
     try:
-        # Path to the historical data directory
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        data_dir = os.path.join(base_dir, "data", "2022-23")  # Adjust the season folder as needed
+        data_dir = os.path.join(base_dir, "data", "2022-23")
 
-        # Define the range of gameweeks to backtest
-        gameweeks = range(1, 39)  # Example: Backtest the entire season
-
-        # Compare strategies
+        gameweeks = range(1, 39)
         results = await compare_strategies(gameweeks, data_dir)
 
-        # Generate graphs
         await generate_graphs(results)
+        csv_path, excel_path = await export_results(results)
 
-        # Export results
-        await export_results(results)
-
-        # Send email notification if enabled
         if BACKTEST_CONFIG["email_notifications"]:
-            email_body = "<h1>FPL Backtest Results</h1>"
-            for strategy_name, data in results.items():
-                email_body += f"<h2>{strategy_name}</h2><p>Total Points: {data['total_points']}</p>"
+            attachments = [
+                f"{OUTPUT_DIR}/strategy_comparison.png",
+                csv_path,
+                excel_path
+            ]
 
-                attachments = [
-                    f"{OUTPUT_DIR}/strategy_comparison.png",
-                    f"{OUTPUT_DIR}/backtest_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-                ]
+            valid_attachments = [f for f in attachments if os.path.exists(f)]
+            if not valid_attachments:
+                logger.warning("⚠️ No attachments found. Email will be sent without files.")
 
-                # Only add existing files
-                valid_attachments = [f for f in attachments if os.path.exists(f)]
-
-                if not valid_attachments:
-                    logger.warning("⚠️ No attachments found. Email will be sent without files.")
-
-            await send_email("FPL Backtest Results", email_body, attachments)
+            await send_email("FPL Backtest Results", results, valid_attachments)
 
     except Exception as e:
         logger.error(f"❌ Fatal error in main function: {e}")
